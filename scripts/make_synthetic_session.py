@@ -149,6 +149,16 @@ def main():
     visible = np.zeros((n, len(cams)), bool)
     chess = board.getChessboardCorners().astype(np.float64)   # (numCorners, 3) board-frame mm
     bg = (rng.normal(110, 12, (H, W))).clip(0, 255).astype(np.uint8)
+
+    # Exact lens model: for every output pixel, precompute its UNDISTORTED normalized
+    # coordinate once per camera (cv2.undistortPoints); per frame, map normalized coords
+    # to board-image pixels through the pinhole homography and cv2.remap. Unlike warping
+    # through four distorted corners, this makes every interior corner obey K/dist exactly.
+    grid = np.stack(np.meshgrid(np.arange(W, dtype=np.float64), np.arange(H, dtype=np.float64)), axis=-1).reshape(-1, 1, 2)
+    for c in cams:
+        und = cv2.undistortPoints(grid, c["K"], c["dist"]).reshape(-1, 2)
+        c["norm_h"] = np.concatenate([und, np.ones((und.shape[0], 1))], axis=1).T   # 3 x N homogeneous normalized coords
+
     for fi in range(n):
         Rb = rodrigues(rots[fi])
         tb = trans[fi] - Rb @ center             # board frame -> world
@@ -157,13 +167,20 @@ def main():
             Rc = c["R"] @ Rb
             tc = c["R"] @ tb + c["t"]
             rvec, _ = cv2.Rodrigues(Rc)
-            proj, _ = cv2.projectPoints(plane_corners, rvec, tc.reshape(3, 1), c["K"], c["dist"])
-            proj = proj.reshape(-1, 2).astype(np.float32)
-            Hm = cv2.getPerspectiveTransform(img_corners, proj)
+            # pinhole (undistorted, normalized) projection of the board image corners
+            Xc = (Rc @ plane_corners.T + tc.reshape(3, 1))
+            normc = (Xc[:2] / Xc[2]).T.astype(np.float32)
+            Hm = cv2.getPerspectiveTransform(normc, img_corners)     # normalized -> board image px
+            bp = Hm @ c["norm_h"]
+            w_ = bp[2]
+            with np.errstate(divide="ignore", invalid="ignore"):
+                mapx = (bp[0] / w_).reshape(H, W).astype(np.float32)
+                mapy = (bp[1] / w_).reshape(H, W).astype(np.float32)
+            behind = (w_ <= 0).reshape(H, W)
+            mapx[behind] = -1; mapy[behind] = -1
             frame = bg.copy()
-            warped = cv2.warpPerspective(board_img, Hm, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT, dst=frame)
-            # mild blur + noise
-            frame = cv2.GaussianBlur(warped, (0, 0), 0.8)
+            cv2.remap(board_img, mapx, mapy, cv2.INTER_LINEAR, dst=frame, borderMode=cv2.BORDER_TRANSPARENT)
+            frame = cv2.GaussianBlur(frame, (0, 0), 0.8)
             if args.noise > 0:
                 frame = (frame.astype(np.float32) + rng.normal(0, args.noise, frame.shape)).clip(0, 255).astype(np.uint8)
             cp, _ = cv2.projectPoints(chess, rvec, tc.reshape(3, 1), c["K"], c["dist"])

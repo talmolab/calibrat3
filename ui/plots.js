@@ -62,7 +62,8 @@ export class SwarmPlot {
             ctx.fillText('No data', W / 2, H / 2);
             return;
         }
-        let lo = Math.min(...all), hi = Math.max(...all);
+        let lo = Infinity, hi = -Infinity;
+        for (const v of all) { if (v < lo) lo = v; if (v > hi) hi = v; }
         for (const t of this.thresholds) { lo = Math.min(lo, t); hi = Math.max(hi, t); }
         let yScale, ticks;
         if (this.log) {

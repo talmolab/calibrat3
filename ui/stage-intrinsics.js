@@ -73,7 +73,7 @@ export async function computeIntrinsics() {
     if (!store || store.size === 0) { showError('Run batch detection first.'); return; }
     const cw = controllers.calib;
     const minCorners = intInput('minCorners', 6);
-    const maxFrames = intInput('maxCalibFrames', 80);
+    const maxFrames = intInput('maxCalibFrames', 50);
     const flags = { fixK3: $('fixK3').checked, zeroTangent: $('zeroTangent').checked };
     const nViews = state.views.length;
     setEnabled('computeIntrinsicsBtn', false);
@@ -85,23 +85,33 @@ export async function computeIntrinsics() {
     const results = new Array(nViews).fill(null);
     let ok = 0;
     try {
-        for (let v = 0; v < nViews; v++) {
-            const view = state.views[v];
+        // One request per camera, dispatched across the calibration worker pool in parallel.
+        const fractions = new Array(nViews).fill(0);
+        const msgs = new Array(nViews).fill('queued');
+        const report = () => progress.set(fractions.reduce((a, b) => a + b, 0) / nViews,
+            state.views.map((v, i) => `${v.name} ${Math.round(fractions[i] * 100)}%`).join(' · '));
+        await Promise.all(state.views.map(async (view, v) => {
             const samples = [];
             for (const f of store.frames()) {
                 const d = store.get(f, v);
                 if (d && d.ids.length >= 4) samples.push({ frame: f, ids: d.ids, corners: d.corners });
             }
             const imageSize = { width: view.info.width, height: view.info.height };
-            progress.set(v / nViews, `${view.name}: ${samples.length} frames`);
-            const res = await cw.request('intrinsics', {
-                samples, imageSize, board: state.board,
-                opts: { minCorners, maxFrames, exclusions: Array.from(state.exclusions.intrinsics), flags },
-            }, { onProgress: (f, msg) => progress.set((v + f) / nViews, `${view.name}: ${msg || ''}`) });
-            if (res.error) {
-                log(`${view.name}: ${res.error}`, 'error');
-                continue;
+            msgs[v] = `${samples.length} frames`;
+            report();
+            let res;
+            try {
+                res = await cw.request('intrinsics', {
+                    samples, imageSize, board: state.board,
+                    opts: { minCorners, maxFrames, exclusions: Array.from(state.exclusions.intrinsics), flags },
+                }, { onProgress: (f, msg) => { fractions[v] = f; msgs[v] = msg || ''; report(); } });
+            } catch (e) {
+                log(`${view.name}: intrinsics failed: ${e.message}`, 'error');
+                fractions[v] = 1; report();
+                return;
             }
+            fractions[v] = 1; report();
+            if (res.error) { log(`${view.name}: ${res.error}`, 'error'); return; }
             results[v] = res;
             ok++;
             const med = medianOf(res.perFrame.errors);
@@ -109,7 +119,7 @@ export async function computeIntrinsics() {
                 `median per-frame ${med.toFixed(3)} px | fx=${res.fx.toFixed(1)} fy=${res.fy.toFixed(1)} cx=${res.cx.toFixed(1)} cy=${res.cy.toFixed(1)} ` +
                 `k1=${res.k1.toFixed(4)} k2=${res.k2.toFixed(4)} p1=${res.p1.toFixed(5)} p2=${res.p2.toFixed(5)} k3=${res.k3.toFixed(4)} | ` +
                 `calibrateCamera ${fmtMs(res.timings.calibrateMs)}, eval ${fmtMs(res.timings.reprojectMs)}`, res.rmsError < 1 ? 'success' : 'warn');
-        }
+        }));
     } catch (e) {
         progress.fail(e.message);
         setStageStatus('stage3', 'Failed', 'error');

@@ -30,14 +30,26 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(`console.error
 const t0 = Date.now();
 const step = (msg) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}`);
 
+// Fail fast when the app shows its error banner instead of waiting for a state that will never come.
+const waitState = (pred, arg, opts) => Promise.race([
+    page.waitForFunction(pred, arg, opts),
+    (async () => {
+        while (true) {
+            await page.waitForTimeout(500);
+            const banner = await page.evaluate(() => { const e = document.getElementById('errorMsg'); return e && e.style.display === 'block' ? e.textContent : null; }).catch(() => null);
+            if (banner) throw new Error(`app error banner: ${banner}`);
+        }
+    })(),
+]);
+
 try {
     await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
-    await page.waitForFunction(() => document.getElementById('workerStatus').classList.contains('ok'), null, { timeout: 180000 });
+    await waitState(() => document.getElementById('workerStatus').classList.contains('ok'), null, { timeout: 180000 });
     step(await page.textContent('#workerStatus'));
 
     // Real fallback path: directory upload into the hidden <input webkitdirectory>.
     await page.setInputFiles('#folderInput', SESSION);
-    await page.waitForFunction(() => window.__calibrat3.state.views.length >= 2 && window.__calibrat3.state.totalFrames > 0, null, { timeout: 180000 });
+    await waitState(() => window.__calibrat3.state.views.length >= 2 && window.__calibrat3.state.totalFrames > 0, null, { timeout: 180000 });
     const info = await page.evaluate(() => ({ layout: window.__calibrat3.state.sessionLayout, views: window.__calibrat3.state.views.map(v => v.name), frames: window.__calibrat3.state.totalFrames, board: window.__calibrat3.state.board }));
     step(`session: ${JSON.stringify(info)}`);
     if (info.layout !== 'nested') throw new Error(`expected nested layout, got ${info.layout}`);
@@ -49,7 +61,7 @@ try {
     else await page.check('#allFramesCheck');
     const tDet = Date.now();
     await page.click('#runDetectionBtn');
-    await page.waitForFunction(() => !window.__calibrat3.state.detectionRunning && window.__calibrat3.state.detections && window.__calibrat3.state.detections.size > 0, null, { timeout: 1800000 });
+    await waitState(() => !window.__calibrat3.state.detectionRunning && window.__calibrat3.state.detections && window.__calibrat3.state.detections.size > 0, null, { timeout: 1800000 });
     const detMs = Date.now() - tDet;
     const summary = await page.evaluate(() => window.__calibrat3.state.detections.summary(6));
     const hb = await page.evaluate(() => window.__hb);
@@ -64,9 +76,9 @@ try {
 
     const tIntr = Date.now();
     await page.click('#computeIntrinsicsBtn');
-    await page.waitForFunction((n) => window.__calibrat3.state.intrinsics.filter(Boolean).length === n, info.views.length, { timeout: 1800000 });
-    const intr = await page.evaluate(() => window.__calibrat3.state.intrinsics.map(r => ({ rms: r.rmsError, used: r.framesUsed, valid: r.framesValid, K: r.K, dist: r.dist, ms: r.timings.totalMs })));
-    step(`intrinsics in ${((Date.now() - tIntr) / 1000).toFixed(1)} s: ${intr.map((r, i) => `${info.views[i]} rms=${r.rms.toFixed(3)} used=${r.used}/${r.valid} (${(r.ms / 1000).toFixed(1)} s)`).join('; ')}`);
+    await waitState((n) => window.__calibrat3.state.intrinsics.filter(Boolean).length === n, info.views.length, { timeout: 1800000 });
+    const intr = await page.evaluate(() => window.__calibrat3.state.intrinsics.map(r => ({ rms: r.rmsError, used: r.framesUsed, valid: r.framesValid, K: r.K, dist: r.dist, ms: r.timings.totalMs, cal: r.timings.calibrateMs, ev: r.timings.reprojectMs })));
+    step(`intrinsics in ${((Date.now() - tIntr) / 1000).toFixed(1)} s: ${intr.map((r, i) => `${info.views[i]} rms=${r.rms.toFixed(3)} used=${r.used}/${r.valid} (calibrate ${(r.cal / 1000).toFixed(1)} s + eval ${(r.ev / 1000).toFixed(1)} s)`).join('; ')}`);
     intr.forEach((r, i) => {
         const g = gt.cameras[i];
         const dfx = Math.abs(r.K[0][0] - g.K[0][0]) / g.K[0][0], dcx = Math.abs(r.K[0][2] - g.K[0][2]);
@@ -77,7 +89,7 @@ try {
 
     const tExt = Date.now();
     await page.click('#computeExtrinsicsBtn');
-    await page.waitForFunction(() => window.__calibrat3.state.reproj !== null, null, { timeout: 1800000 });
+    await waitState(() => window.__calibrat3.state.reproj !== null, null, { timeout: 1800000 });
     let ext = await page.evaluate(() => ({ e: window.__calibrat3.state.extrinsics.map(e => e.error ? { error: e.error } : { rvec: e.rvec, tvec: e.tvec }), s: window.__calibrat3.state.reproj.summary }));
     step(`extrinsics + reprojection in ${((Date.now() - tExt) / 1000).toFixed(1)} s: ${ext.s.frames} frames, ${ext.s.points} points, mean ${ext.s.overall.mean.toFixed(3)} px, median ${ext.s.overall.median.toFixed(3)}, p95 ${ext.s.overall.p95.toFixed(2)}`);
     const compare = (label) => ext.e.forEach((e, i) => {
@@ -93,7 +105,7 @@ try {
     await page.waitForSelector('#runSbaBtn:not([disabled])', { timeout: 60000 });
     const tSba = Date.now();
     await page.click('#runSbaBtn');
-    await page.waitForFunction(() => window.__calibrat3.state.sbaResult !== null, null, { timeout: 1800000 });
+    await waitState(() => window.__calibrat3.state.sbaResult !== null, null, { timeout: 1800000 });
     await page.waitForSelector('#runSbaBtn:not([disabled])', { timeout: 1800000 });
     const sba = await page.evaluate(() => { const r = window.__calibrat3.state.sbaResult; return { iters: r.result.iterations, initial: r.result.initial_cost, final: r.result.final_cost, filtered: r.result.num_observations_filtered, points: r.meta.numPoints, obs: r.meta.numObservations, ms: r.result.ms }; });
     ext = await page.evaluate(() => ({ e: window.__calibrat3.state.extrinsics.map(e => ({ rvec: e.rvec, tvec: e.tvec })), s: window.__calibrat3.state.reproj.summary }));

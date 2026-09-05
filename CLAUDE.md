@@ -36,10 +36,14 @@ rendered, detected on the main thread and appended DOM per frame. Here:
    detectors cached per board config) and closed there. Per-view in-flight cap is
    2. Thumbnails (160 px JPEG Blobs, view 0) are produced by the worker from the
    frame it already has — never re-decoded.
-2. **Calibration** (`calib-worker.js`, one classic worker that `importScripts`
-   opencv.js and `import()`s the ESM calib modules + the sba wrapper) runs
+2. **Calibration** (`calib-worker.js`, classic workers that `importScripts`
+   opencv.js and `import()` the ESM calib modules + the sba wrapper; a small pool
+   via `loading/calib-client.js` so per-camera intrinsics run in parallel) runs
    `calibrateCameraExtended`, per-frame solvePnP, relative poses, WASM
    triangulation and bundle adjustment. Progress messages are throttled to ~25 Hz.
+   `calibrateCamera`'s LM solve is cubic in the number of frames (a dense
+   (9+6n)-sized system per iteration), which is why frames are subsampled for the
+   fit (default 50) and every valid frame is only *evaluated* afterwards.
 3. **The main thread never loads OpenCV.** Overlays reproject with pure-JS
    `calib/geometry.js` (`projectPoints` from stored rvec/tvec).
 4. **Nothing per-frame in the DOM.** Frame strip (canvas), virtualized table
@@ -102,12 +106,18 @@ SESSION=/tmp/synthetic_session node tests/e2e/stress-synthetic.mjs   # after scr
 Test files must stay environment-agnostic (no `node:` imports outside
 `tests/harness.mjs`'s `isNode` branches) so the browser runner can load them.
 
-Reference numbers (headless Chromium, no GPU, shared CPU): sample session (4 × 21
-frames) detects in ~2 s; the synthetic 4 × 1200-frame session detects every frame in
-~2.5 min at ~34 detections/s (≈105 ms per 1280×1024 frame inside a worker, 4 workers)
-with the main-thread rAF heartbeat never gapping more than ~100 ms and ~2% decode
-overhead (1229 decoded per 1200 wanted). The original calibration-studio on the sample
-session: initial cross-view median 10.5 px → 6.5 px after SBA; calibrat3: 5.8 → 3.7 px
+Reference numbers (headless Chromium, no GPU, shared CPU; `tests/e2e/stress-synthetic.mjs`
+on a 4-camera x 1200-frame synthetic session with ground truth): batch detection of
+every frame 149 s = 32 detections/s (~105 ms per 1280x1024 frame in a worker, 4 workers),
+main-thread rAF heartbeat never gapping > 185 ms, 1230 decoded frames per 1200 wanted
+(2.5 % overhead), 1200 thumbnails; intrinsics for 4 cameras in 18.6 s (50 coverage-selected
+frames each, cubic cost in frames -> keep the cap modest) with fx within 0.4 %, cx within
+7 px, k1 within 0.003 of ground truth; extrinsics + cross-view reprojection of 84k points in
+2.4 s with camera centres within 1-5 mm and rotations < 0.4 deg; SBA over 42k points /
+157k observations 115 s (roughly linear in points -> default cap 20k). DOM after the run:
+19 table rows, 80 gallery cards, 29 log entries, 57 MB JS heap. Sample session (4 x 21
+frames): detect 2 s, intrinsics 3 s, whole pipeline ~16 s. Original calibration-studio on
+the sample: initial cross-view median 10.5 px -> 6.5 px after SBA; calibrat3: 5.8 -> 3.7 px
 with intrinsics/translations matching to ~1 mm.
 
 ## Deploy

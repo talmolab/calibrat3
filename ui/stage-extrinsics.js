@@ -160,7 +160,7 @@ export async function runSba() {
     const cw = controllers.calib;
     const refIdx = state.referenceView;
     const input = prepareSbaInput(state.reproj, state.intrinsics, state.extrinsics, {
-        excludedFrames: state.exclusions.extrinsics, maxPoints: intInput('sbaMaxPoints', 60000),
+        excludedFrames: state.exclusions.extrinsics, maxPoints: intInput('sbaMaxPoints', 20000),
     });
     if (input.points.length < 10) { showError('Not enough triangulated points for bundle adjustment.'); return; }
     const config = {

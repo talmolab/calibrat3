@@ -25,6 +25,17 @@ page.on('console', (m) => {
 
 const t0 = Date.now();
 const step = (msg) => console.log(`[${((Date.now() - t0) / 1000).toFixed(1)}s] ${msg}`);
+// Fail fast when the app shows its error banner instead of waiting for a state that will never come.
+const waitState = (pred, arg, opts) => Promise.race([
+    page.waitForFunction(pred, arg, opts),
+    (async () => {
+        while (true) {
+            await page.waitForTimeout(500);
+            const banner = await page.evaluate(() => { const e = document.getElementById('errorMsg'); return e && e.style.display === 'block' ? e.textContent : null; }).catch(() => null);
+            if (banner) throw new Error(`app error banner: ${banner}`);
+        }
+    })(),
+]);
 const state = () => page.evaluate(() => {
     const s = window.__calibrat3.state;
     return {
@@ -40,18 +51,18 @@ const state = () => page.evaluate(() => {
 try {
     await page.goto(`${BASE}/index.html`, { waitUntil: 'load' });
     step('page loaded; waiting for workers');
-    await page.waitForFunction(() => document.getElementById('workerStatus').classList.contains('ok'), null, { timeout: 120000 });
+    await waitState(() => document.getElementById('workerStatus').classList.contains('ok'), null, { timeout: 120000 });
     step(await page.textContent('#workerStatus'));
 
     await page.click('#loadSampleBtn');
-    await page.waitForFunction(() => window.__calibrat3.state.views.length === 4 && window.__calibrat3.state.totalFrames > 0, null, { timeout: 60000 });
+    await waitState(() => window.__calibrat3.state.views.length === 4 && window.__calibrat3.state.totalFrames > 0, null, { timeout: 60000 });
     const s1 = await state();
     step(`session: ${s1.views} views, ${s1.totalFrames} frames`);
 
     await page.fill('#targetSamples', String(TARGET));
     await page.dispatchEvent('#targetSamples', 'input');
     await page.click('#runDetectionBtn');
-    await page.waitForFunction(() => !window.__calibrat3.state.detectionRunning && window.__calibrat3.state.detections && window.__calibrat3.state.detections.size > 0, null, { timeout: 300000 });
+    await waitState(() => !window.__calibrat3.state.detectionRunning && window.__calibrat3.state.detections && window.__calibrat3.state.detections.size > 0, null, { timeout: 300000 });
     const s2 = await state();
     step(`detections stored for ${s2.detections} frames`);
     const summary = await page.evaluate(() => window.__calibrat3.state.detections.summary(6));
@@ -59,20 +70,20 @@ try {
     if (summary.framesAllViewsGood < 3) throw new Error('too few frames detected in all views');
 
     await page.click('#computeIntrinsicsBtn');
-    await page.waitForFunction(() => window.__calibrat3.state.intrinsics.filter(Boolean).length === 4, null, { timeout: 300000 });
+    await waitState(() => window.__calibrat3.state.intrinsics.filter(Boolean).length === 4, null, { timeout: 300000 });
     const s3 = await state();
     step(`intrinsics: ${JSON.stringify(s3.intrinsics)}`);
     for (const r of s3.intrinsics) if (!r || !(r.rms < 5)) throw new Error(`bad intrinsics ${JSON.stringify(r)}`);
 
     await page.click('#computeExtrinsicsBtn');
-    await page.waitForFunction(() => window.__calibrat3.state.reproj !== null, null, { timeout: 300000 });
+    await waitState(() => window.__calibrat3.state.reproj !== null, null, { timeout: 300000 });
     const s4 = await state();
     step(`extrinsics: ${JSON.stringify(s4.extrinsics)}  reproj: ${JSON.stringify(s4.reproj)}`);
     if (!(s4.reproj.median < 10)) throw new Error('cross-view reprojection too large');
 
     await page.waitForSelector('#runSbaBtn:not([disabled])', { timeout: 60000 });
     await page.click('#runSbaBtn');
-    await page.waitForFunction(() => window.__calibrat3.state.sbaResult !== null, null, { timeout: 300000 });
+    await waitState(() => window.__calibrat3.state.sbaResult !== null, null, { timeout: 300000 });
     await page.waitForSelector('#runSbaBtn:not([disabled])', { timeout: 300000 });
     const s5 = await state();
     step(`sba: ${JSON.stringify(s5.sba)}  reproj after: ${JSON.stringify(s5.reproj)}`);
@@ -84,8 +95,8 @@ try {
 
     // --- revert SBA restores the initial reprojection
     await page.click('#revertSbaBtn');
-    await page.waitForFunction(() => window.__calibrat3.state.sbaResult === null && window.__calibrat3.state.reproj !== null, null, { timeout: 60000 });
-    await page.waitForFunction(() => document.getElementById('extrinsicsProgress').classList.contains('active') === false, null, { timeout: 60000 });
+    await waitState(() => window.__calibrat3.state.sbaResult === null && window.__calibrat3.state.reproj !== null, null, { timeout: 60000 });
+    await waitState(() => document.getElementById('extrinsicsProgress').classList.contains('active') === false, null, { timeout: 60000 });
     const s6 = await state();
     if (Math.abs(s6.reproj.mean - s4.reproj.mean) > 1e-6) throw new Error(`revert did not restore reprojection (${s6.reproj.mean} vs ${s4.reproj.mean})`);
     step('revert SBA ok');
@@ -99,7 +110,7 @@ try {
     step(`exclusion toggled on frame ${excl.cur}`);
     // recompute extrinsics with the exclusion: the excluded frame must leave the covisibility graph but stay in the reprojection set
     await page.click('#computeExtrinsicsBtn');
-    await page.waitForFunction(() => document.getElementById('computeExtrinsicsBtn').disabled === false && window.__calibrat3.state.reproj !== null, null, { timeout: 120000 });
+    await waitState(() => document.getElementById('computeExtrinsicsBtn').disabled === false && window.__calibrat3.state.reproj !== null, null, { timeout: 120000 });
     await page.waitForTimeout(300);
     const framesInReproj = await page.evaluate(() => window.__calibrat3.state.reproj.frames.length);
     if (framesInReproj !== s2.detections) throw new Error(`reproj frames ${framesInReproj} != detections ${s2.detections}`);
@@ -112,7 +123,7 @@ try {
     const exIntr = await page.evaluate(() => window.__calibrat3.state.exclusions.intrinsics.size);
     if (exIntr !== 1) throw new Error(`intrinsics exclusion via gallery: ${exIntr}`);
     await page.click('#computeIntrinsicsBtn');
-    await page.waitForFunction(() => window.__calibrat3.state.intrinsics.filter(Boolean).length === 4 && document.getElementById('computeIntrinsicsBtn').disabled === false, null, { timeout: 120000 });
+    await waitState(() => window.__calibrat3.state.intrinsics.filter(Boolean).length === 4 && document.getElementById('computeIntrinsicsBtn').disabled === false, null, { timeout: 120000 });
     const s7 = await state();
     if (s7.intrinsics.some(r => r.used !== r.valid - 1)) throw new Error(`excluded frame not dropped from fit: ${JSON.stringify(s7.intrinsics)}`);
     if (s7.reproj !== null) throw new Error('recomputing intrinsics must invalidate extrinsics/reprojection');
@@ -120,9 +131,9 @@ try {
 
     // --- single-frame detection hotkey
     await page.evaluate(() => window.__calibrat3.controllers.video.seekToFrame(5));
-    await page.waitForFunction(() => window.__calibrat3.state.currentFrame === 5, null, { timeout: 10000 });
+    await waitState(() => window.__calibrat3.state.currentFrame === 5, null, { timeout: 10000 });
     await page.keyboard.press('d');
-    await page.waitForFunction(() => window.__calibrat3.state.liveDetection && window.__calibrat3.state.liveDetection.frame === 5, null, { timeout: 60000 });
+    await waitState(() => window.__calibrat3.state.liveDetection && window.__calibrat3.state.liveDetection.frame === 5, null, { timeout: 60000 });
     const live = await page.evaluate(() => window.__calibrat3.state.liveDetection.perView.map(d => d ? d.ids.length : -1));
     if (live.some(n => n < 6)) throw new Error(`live detection: ${JSON.stringify(live)}`);
     step(`detect-current-frame: ${JSON.stringify(live)} corners`);
@@ -146,7 +157,7 @@ try {
     // --- re-detect with "every frame" on top of an existing session (state reset path)
     await page.check('#allFramesCheck');
     await page.click('#runDetectionBtn');
-    await page.waitForFunction(() => !window.__calibrat3.state.detectionRunning && window.__calibrat3.state.detections && window.__calibrat3.state.detections.size === window.__calibrat3.state.totalFrames, null, { timeout: 300000 });
+    await waitState(() => !window.__calibrat3.state.detectionRunning && window.__calibrat3.state.detections && window.__calibrat3.state.detections.size === window.__calibrat3.state.totalFrames, null, { timeout: 300000 });
     const s8 = await state();
     if (s8.intrinsics.length !== 0 || s8.reproj !== null) throw new Error('re-detection must reset downstream results');
     step(`re-detected every frame: ${s8.detections} frames, downstream reset`);
