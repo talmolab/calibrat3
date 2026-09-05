@@ -17,6 +17,7 @@ import { CalibWorker } from '../loading/calib-client.js';
 import { loadSampleSession, pickSessionFolder, scanFileList } from '../loading/folder-loader.js';
 import { validateSession, restoreSession } from '../import-export/session-save.js';
 import { emit } from '../ui/events.js';
+import { setupGalleryToggles } from '../ui/gallery.js';
 
 export function initApp() {
     initLogPanel({ bodyEl: $('logBody'), copyBtn: $('copyLogBtn'), clearBtn: $('clearLogBtn'), verboseToggle: $('logVerbose'), countEl: $('logCount') });
@@ -34,6 +35,7 @@ export function initApp() {
     setupIntrinsicsStage();
     setupExtrinsicsStage();
     setupExportStage();
+    setupGalleryToggles();
     setupLoaders();
     setupGlobalKeys();
     startWorkers();

@@ -42,7 +42,7 @@ export class CalibWorker {
                 if (m.type === 'ready') { resolve(); return; }
                 if (m.type === 'log') { this.log(`[calib${this.size > 1 ? ' ' + idx : ''}] ${m.msg}`, m.level || 'info'); return; }
                 const p = m.requestId ? this.pending.get(m.requestId) : null;
-                if (m.type === 'progress') { p && p.onProgress && p.onProgress(m.fraction, m.msg); return; }
+                if (m.type === 'progress') { p && p.onProgress && p.onProgress(m.fraction, m.msg, m.detail); return; }
                 if (m.type === 'result') { if (p) { this._finish(m.requestId, p); p.resolve(m.result); } return; }
                 if (m.type === 'error') {
                     if (p) { this._finish(m.requestId, p); p.reject(Object.assign(new Error(m.error), { stack: m.stack })); }

@@ -43,7 +43,9 @@ and pinned dependencies, web workers for anything heavy.
 - **Bundle adjustment** with `@talmolab/sba-solver-wasm` in the worker, with
   anipose-style iterative outlier rejection (per-point thresholds decreasing over
   rounds, re-triangulation each round), robust loss, choice of what to optimize,
-  point cap, before/after per-camera error table, convergence chart, one-click revert.
+  point cap, live iteration progress (chunked solver), a refined-reprojection section
+  with an anipose-style error histogram (initial vs refined), before/after per-camera
+  table, Worst/Best frame galleries, convergence chart, one-click revert.
 - **Export:** `calibration.toml` (sleap-anipose), a full `calibration_data.json`
   (all observations, triangulated points, per-camera errors), `board.toml`, and a
   **session save** (`*.calibrat3.json`) that restores detections and results

@@ -8,17 +8,17 @@ import { state, controllers, cameraColor } from './app-state.js';
 import { log, fmtMs } from './log-panel.js';
 import { $, el, intInput, numInput, setStageStatus, expandStage, setEnabled, showError, Progress, errorColor } from './stages.js';
 import { FrameStrip, errorColormap } from './frame-strip.js';
-import { SwarmPlot, drawLineChart } from './plots.js';
+import { SwarmPlot, ErrorHistogram, drawLineChart } from './plots.js';
 import { FrameGallery } from './gallery.js';
 import { indexReprojectionByFrame } from '../calib/triangulation.js';
 import { prepareSbaInput, applySbaResults, sbaReferenceIndex, filterSbaInput, outlierSchedule } from '../calib/sba.js';
-import { percentile } from '../calib/geometry.js';
+import { percentile, norm3, sub3, rotationAngle } from '../calib/geometry.js';
 import { boardMotionScores, framesAboveMotion, motionSummary } from '../calib/motion.js';
 import { cameraCenter } from '../calib/geometry.js';
 import { emit, on } from './events.js';
 
-let strip = null, plot = null, gallery = null, progress = null, sbaProgress = null;
-let worstOrder = [];
+let progress = null, sbaProgress = null;
+let initialSec = null, refinedSec = null;   // {strip, plot, hist, gallery, summaryEl, rootEl}
 let preSba = null;   // {intrinsics, extrinsics} before the last SBA run
 
 export function setupExtrinsicsStage() {
@@ -30,40 +30,91 @@ export function setupExtrinsicsStage() {
     $('referenceCamera').addEventListener('change', (e) => { state.referenceView = parseInt(e.target.value, 10) || 0; });
     $('clearExtrinsicsExclusionsBtn').addEventListener('click', () => { state.exclusions.extrinsics.clear(); emit('exclusions-changed', { kind: 'extrinsics' }); });
 
-    strip = new FrameStrip($('extrinsicsStrip'), {
-        height: 40,
-        tooltipEl: $('extrinsicsStripTooltip'),
-        tooltip: (f) => {
-            const rec = state.reprojByFrame.get(f);
-            if (!rec) return `frame ${f}\nno triangulation`;
-            const per = state.views.map((v, i) => `${v.name.padEnd(10)} ${rec.views[i] ? rec.views[i].mean.toFixed(2) + ' (' + rec.views[i].count + ')' : '–'}`).join('\n');
-            return `frame ${f} · mean ${rec.meanErr.toFixed(2)} px · ${rec.n} pts${state.exclusions.extrinsics.has(f) ? ' · EXCLUDED' : ''}\n${per}`;
-        },
-        onClick: (f) => { setActive(); controllers.video.seekToFrame(f); },
-    });
-    plot = new SwarmPlot($('extrinsicsPlot'), $('extrinsicsPlotTooltip'), {
-        yLabel: 'mean reproj error / frame (px)',
-        height: 250,
-        formatTooltip: (p) => `${p.group}  frame ${p.frame}\nmean ${p.y.toFixed(3)} px over ${p.meta.count} pts (max ${p.meta.max.toFixed(2)})${p.excluded ? '\nEXCLUDED' : ''}\nclick to seek`,
-        onClick: (p) => { setActive(); controllers.video.seekToFrame(p.frame); },
-    });
-    gallery = new FrameGallery($('extrinsicsGallery'), {
-        getThumb: (f) => state.thumbnails.get(f) || null,
-        onSeek: (f) => { setActive(); controllers.video.seekToFrame(f); },
-        onToggleExclude: (f) => toggleExtrinsicsExclusion(f),
-        limit: 40,
-    });
+    initialSec = buildSection({ strip: 'extrinsicsStrip', stripTip: 'extrinsicsStripTooltip', plot: 'extrinsicsPlot', plotTip: 'extrinsicsPlotTooltip', hist: 'extrinsicsHist', histTip: 'extrinsicsHistTooltip', gallery: 'extrinsicsGallery', summary: 'reprojSummary', root: 'extrinsicsResults' });
+    refinedSec = buildSection({ strip: 'refinedStrip', stripTip: 'refinedStripTooltip', plot: 'refinedPlot', plotTip: 'refinedPlotTooltip', hist: 'refinedHist', histTip: 'refinedHistTooltip', gallery: 'refinedGallery', summary: 'refinedSummary', root: 'refinedResults' });
     $('stage4').addEventListener('mousedown', () => { if (state.reproj) setActive(); });
 
-    on('frame', ({ frame }) => { strip.setCurrent(frame); gallery.setCurrent(frame); });
+    on('frame', ({ frame }) => { for (const sec of [initialSec, refinedSec]) { sec.strip.setCurrent(frame); sec.gallery.setCurrent(frame); sec.galleryBest.setCurrent(frame); } });
     on('exclusions-changed', ({ kind }) => { if (kind === 'extrinsics') refreshExclusionViews(); });
     on('intrinsics-changed', () => { hideResults(); });
     on('detections-changed', () => { hideResults(); setEnabled('computeExtrinsicsBtn', false); });
     on('session-loaded', () => { hideResults(); setEnabled('computeExtrinsicsBtn', false); setStageStatus('stage4', 'Waiting for intrinsics'); });
 }
 
+/** Strip + swarm plot + histogram + gallery bound to one reprojection result. */
+function buildSection(ids) {
+    const sec = { rootEl: $(ids.root), summaryEl: $(ids.summary), reproj: null, byFrame: new Map() };
+    sec.strip = new FrameStrip($(ids.strip), {
+        height: 40, tooltipEl: $(ids.stripTip),
+        tooltip: (f) => {
+            const rec = sec.byFrame.get(f);
+            if (!rec) return `frame ${f}\nno triangulation`;
+            const per = state.views.map((v, i) => `${v.name.padEnd(10)} ${rec.views[i] ? rec.views[i].mean.toFixed(2) + ' (' + rec.views[i].count + ')' : '–'}`).join('\n');
+            return `frame ${f} · mean ${rec.meanErr.toFixed(2)} px · ${rec.n} pts${state.exclusions.extrinsics.has(f) ? ' · EXCLUDED' : ''}\n${per}`;
+        },
+        onClick: (f) => { setActive(); controllers.video.seekToFrame(f); },
+    });
+    sec.plot = new SwarmPlot($(ids.plot), $(ids.plotTip), {
+        yLabel: 'mean reproj error / frame (px)', height: 250,
+        formatTooltip: (p) => `${p.group}  frame ${p.frame}\nmean ${p.y.toFixed(3)} px over ${p.meta.count} pts (max ${p.meta.max.toFixed(2)})${p.excluded ? '\nEXCLUDED' : ''}\nclick to seek`,
+        onClick: (p) => { setActive(); controllers.video.seekToFrame(p.frame); },
+    });
+    sec.hist = new ErrorHistogram($(ids.hist), $(ids.histTip), { height: 220 });
+    const galleryOpts = { getThumb: (f) => state.thumbnails.get(f) || null, onSeek: (f) => { setActive(); controllers.video.seekToFrame(f); }, onToggleExclude: (f) => toggleExtrinsicsExclusion(f), limit: 30 };
+    sec.gallery = new FrameGallery($(ids.gallery), galleryOpts);
+    sec.galleryBest = new FrameGallery($(ids.gallery + 'Best'), galleryOpts);
+    return sec;
+}
+
+/** Per-camera observation error arrays (Float32Array each) from a reprojection result. */
+function perCameraErrors(rp) {
+    const nV = state.views.length;
+    const counts = new Array(nV).fill(0);
+    for (const r of rp.frames) for (let v = 0; v < nV; v++) if (r.views[v]) counts[v] += r.views[v].count;
+    const out = counts.map(c => new Float32Array(c)), pos = new Array(nV).fill(0);
+    for (const r of rp.frames) for (let v = 0; v < nV; v++) {
+        const vr = r.views[v]; if (!vr) continue;
+        for (let i = 0; i < r.n; i++) if (vr.mask[i] && Number.isFinite(vr.err[i])) out[v][pos[v]++] = vr.err[i];
+    }
+    return out.map((a, v) => a.subarray(0, pos[v]));
+}
+
+function concatAll(arrs) {
+    const n = arrs.reduce((a, b) => a + b.length, 0), out = new Float32Array(n); let p = 0;
+    for (const a of arrs) { out.set(a, p); p += a.length; }
+    return out;
+}
+
+/** Render strip/plot/histogram/gallery of a section from a reprojection result. */
+function renderSection(sec, rp, { histSeries = null, histNote = '', thresholds = [] } = {}) {
+    sec.reproj = rp;
+    sec.byFrame = indexReprojectionByFrame(rp);
+    sec.rootEl.style.display = '';
+    const s = rp.summary;
+    sec.summaryEl.textContent = `${s.frames} frames · ${s.points} points · mean ${s.overall.mean.toFixed(3)} px · median ${s.overall.median.toFixed(3)} · p95 ${s.overall.p95.toFixed(2)}`;
+    const frames = rp.frames.map(r => r.frame);
+    sec.strip.setData({ frames, colorFn: (f) => errorColormap(sec.byFrame.get(f)?.meanErr), excluded: state.exclusions.extrinsics });
+    sec.plot.setData(state.views.map((v, i) => ({
+        label: v.name, color: cameraColor(i),
+        points: rp.frames.filter(r => r.views[i] && isFinite(r.views[i].mean)).map(r => ({ y: r.views[i].mean, frame: r.frame, excluded: state.exclusions.extrinsics.has(r.frame), meta: { count: r.views[i].count, max: r.views[i].max } })),
+    })), { thresholds: [1], note: `mean ${s.overall.mean.toFixed(2)} · median ${s.overall.median.toFixed(2)} · n=${s.observations}` });
+    if (histSeries) sec.hist.setData(histSeries, { thresholds, note: histNote });
+    else sec.hist.setData(perCameraErrors(rp).map((a, i) => ({ label: state.views[i].name, color: cameraColor(i), values: a })), { note: histNote });
+    const items = rp.frames.map(r => ({
+        frame: r.frame, value: r.meanErr, excluded: state.exclusions.extrinsics.has(r.frame),
+        sub: state.views.map((v, i) => r.views[i] ? { name: v.name, m: r.views[i].mean } : null).filter(x => x && Number.isFinite(x.m)).sort((a, b) => b.m - a.m).slice(0, 3).map(x => `${x.name}:${x.m.toFixed(2)}`).join(' '),
+    }));
+    sec.gallery.setItems(items, { sort: 'desc' });
+    sec.galleryBest.setItems(items.filter(i => !i.excluded), { sort: 'asc' });
+    sec.gallery.setCurrent(state.currentFrame);
+    sec.galleryBest.setCurrent(state.currentFrame);
+    sec.strip.setCurrent(state.currentFrame);
+}
+
 function hideResults() {
     $('extrinsicsResults').style.display = 'none';
+    $('refinedResults').style.display = 'none';
+    state.reprojInitial = null;
     $('sbaPanel').style.display = 'none';
     $('sbaResult').style.display = 'none';
     $('revertSbaBtn').style.display = 'none';
@@ -135,6 +186,9 @@ export async function computeExtrinsics() {
 
         await computeReprojection((f, msg) => progress.set(0.5 + 0.5 * f, msg));
         state.reprojInitialSummary = state.reproj.summary;   // kept for the before/after table
+        state.reprojInitial = state.reproj;                   // kept for the initial plots
+        $('refinedResults').style.display = 'none';
+        renderSection(initialSec, state.reproj);
         renderStatsTable();
         progress.hide();
         const s = state.reproj.summary;
@@ -175,7 +229,6 @@ async function computeReprojection(onProgress) {
     log(`Cross-view reprojection: ${s.frames} frames, ${s.points} points, ${s.observations} observations in ${fmtMs(performance.now() - t0)} | ` +
         `mean ${s.overall.mean.toFixed(3)} px, median ${s.overall.median.toFixed(3)}, p95 ${s.overall.p95.toFixed(2)}, max ${s.overall.max.toFixed(1)} | ` +
         `per camera: ${state.views.map((v, i) => `${v.name}=${s.perView[i].mean.toFixed(2)}`).join(' ')}`, s.overall.median < 1 ? 'success' : 'warn');
-    renderReprojection();
     controllers.video.redraw();
 }
 
@@ -238,10 +291,11 @@ export async function runSba() {
             // Keep the initial calibration; report what was tried.
             sbaProgress.fail('no improvement');
             state.sbaResult = null;
+            $('refinedResults').style.display = 'none';
             $('sbaResult').style.display = '';
             $('revertSbaBtn').style.display = 'none';
             $('sbaSummary').textContent = `No improvement: ${attempts.map(a => `${a.label} → median ${median(a).toFixed(2)} px`).join('; ')} vs initial ${s0.overall.median.toFixed(2)} px. Initial calibration kept. ${fmtMs(performance.now() - t0)}`;
-            drawLineChart($('sbaChart'), best.lastResult.cost_history, { label: `cost, ${best.label} (log)` });
+            drawLineChart($('sbaChart'), best.costHistory, { label: `cost, ${best.label} (log)` });
             log(`Bundle adjustment could not improve on the initial calibration (${attempts.map(a => `${a.label}: ${median(a).toFixed(2)} px`).join(', ')} vs ${s0.overall.median.toFixed(2)} px). ` +
                 `The solver lowers its own cost by moving free 3D points, so the 2D observations are not mutually consistent across cameras (camera timing / board motion / bad frames). ` +
                 `Try: exclude fast frames (max board motion), fewer rounds, check that the videos are frame-synchronized.`, 'warn');
@@ -261,7 +315,7 @@ export async function runSba() {
         state.sbaResult = { result: lr, rounds: best.roundLog, attempts: attempts.map(a => ({ label: a.label, median: median(a) })), config: { ...best.config, rounds: schedule.length, thresholds: schedule, finalThreshold: best.lastMu }, meta: { ...best.lastInput.meta, pointsTotal: nPts, pointsExcluded: nPts - kept, observationsTotal: best.input.observations.length, observationsExcluded: best.input.observations.length - best.lastInput.observations.length } };
         sbaProgress.hide();
         renderPoseTables();
-        renderReprojection();
+        renderRefined(best.lastMu);
         renderStatsTable();
         controllers.video.redraw();
         $('sbaResult').style.display = '';
@@ -269,8 +323,10 @@ export async function runSba() {
         $('sbaSummary').textContent = `${best.label} · ${schedule.length} round(s) · final fit on ${kept}/${nPts} points (threshold ${Number.isFinite(best.lastMu) ? best.lastMu.toFixed(1) : 'none'} px) · ` +
             `last round ${lr.iterations} iterations, cost ${lr.initial_cost.toFixed(0)} → ${lr.final_cost.toFixed(0)} (−${improvement.toFixed(1)}%) · ${lr.status}` +
             (attempts.length > 1 ? ` · also tried ${attempts.slice(1).map(a => `${a.label} (${median(a).toFixed(2)} px)`).join(', ')}` : '') + ` · ${fmtMs(performance.now() - t0)}`;
-        drawLineChart($('sbaChart'), lr.cost_history, { label: 'cost, last round (log)' });
+        drawLineChart($('sbaChart'), best.costHistory, { label: `cost over ${schedule.length} round(s) (log)` });
         const s = state.reproj.summary;
+        log(`Bundle adjustment per camera (initial → refined): ${state.views.map((v, vi) => { const a = s0.perView[vi], b = s.perView[vi]; const e0 = preSba.extrinsics[vi], e1 = state.extrinsics[vi]; const mv = (e0 && e1 && !e0.error && !e1.error) ? `, moved ${norm3(sub3(e1.tvec, e0.tvec)).toFixed(1)} mm / ${(rotationAngle(e0.R, e1.R) * 180 / Math.PI).toFixed(2)}°` : ''; return `${v.name}: median ${a ? a.median.toFixed(2) : '–'} → ${b ? b.median.toFixed(2) : '–'} px, p95 ${a ? a.p95.toFixed(1) : '–'} → ${b ? b.p95.toFixed(1) : '–'}${mv}`; }).join('; ')}`);
+        if (attempts.length > 1) log(`Model selection: ${attempts.map(a => `${a.label} → median ${median(a).toFixed(2)} px`).join('; ')} → kept "${best.label}"`);
         log(`Bundle adjustment done in ${fmtMs(performance.now() - t0)} (${best.label}): cross-view reprojection median ${s0.overall.median.toFixed(2)} → ${s.overall.median.toFixed(2)} px, mean ${s0.overall.mean.toFixed(2)} → ${s.overall.mean.toFixed(2)} px over all observations; ${nPts - kept} points excluded from the final fit`, 'success');
         setStageStatus('stage4', `refined · mean ${s.overall.mean.toFixed(2)} px (median ${s.overall.median.toFixed(2)})`, s.overall.median < 1 ? 'complete' : 'warn');
         emit('extrinsics-changed', {});
@@ -295,8 +351,11 @@ async function sbaAttempt(config, schedule, prep, progressBase, progressSpan) {
     let input = prep(reproj, intr, extr);
     let lastResult = null, lastInput = null, lastMu = Infinity;
     const roundLog = [];
+    const costHistory = [];   // all rounds concatenated (for the final chart)
     const P = (f, msg) => sbaProgress.set(progressBase + progressSpan * f, `${label}: ${msg}`);
     for (let r = 0; r < schedule.length; r++) {
+        const tRound = performance.now();
+        const prevIntr = intr, prevExtr = extr, prevReproj = reproj, input0Obs = input.observations;
         const errs = input.meta.pointErr;
         const finite = errs.filter(Number.isFinite);
         const floor = percentile(finite, 0.8);   // never reject more than ~20 % of points in one round
@@ -307,8 +366,21 @@ async function sbaAttempt(config, schedule, prep, progressBase, progressSpan) {
         const filtered = filterSbaInput(input, keepObs);
         P(r / schedule.length, `round ${r + 1}/${schedule.length}: ${filtered.points.length}/${input.points.length} points ≤ ${Number.isFinite(mu) ? mu.toFixed(1) : '∞'} px`);
         if (filtered.points.length < 10) { log(`SBA round ${r + 1}: only ${filtered.points.length} points left; stopping`, 'warn'); break; }
-        const result = await cw.request('sba', { input: filtered, config }, { onProgress: (f, msg) => P((r + 0.05 + 0.75 * f) / schedule.length, `round ${r + 1}/${schedule.length}: ${msg || ''}`) });
+        const tSolve = performance.now();
+        let lastLoggedIter = 0;
+        const result = await cw.request('sba', { input: filtered, config, chunkIters: intInput('sbaChunkIters', 10) }, {
+            onProgress: (f, msg, detail) => {
+                P((r + 0.05 + 0.75 * f) / schedule.length, `round ${r + 1}/${schedule.length}: ${msg || ''}`);
+                if (detail && detail.costHistory) drawLineChart($('sbaChart'), detail.costHistory, { label: `round ${r + 1} cost, live (log)` });
+                if (detail && detail.iteration > lastLoggedIter && detail.cost !== undefined) {
+                    lastLoggedIter = detail.iteration;
+                    log(`  ${label}, round ${r + 1}: iteration ${detail.iteration}/${detail.maxIters}, cost ${detail.cost.toFixed(1)} (−${((detail.initialCost - detail.cost) / Math.max(1e-9, detail.initialCost) * 100).toFixed(2)}% so far), fit RMS ≈ ${detail.rms.toFixed(3)} px, ${detail.status}, ${fmtMs(detail.ms)}`, 'debug');
+                }
+            },
+        });
+        const solveMs = performance.now() - tSolve;
         lastResult = result; lastInput = filtered;
+        costHistory.push(...(result.cost_history || []));
         const applied = applySbaResults(result, filtered, intr, extr);
         intr = applied.intrinsics; extr = applied.extrinsics;
         const fitRms = Math.sqrt(result.final_cost / Math.max(1, result.num_observations_used));
@@ -317,12 +389,25 @@ async function sbaAttempt(config, schedule, prep, progressBase, progressSpan) {
         input = prep(reproj, intr, extr);
         const fin = input.meta.pointErr.filter(Number.isFinite);
         roundLog.push({ round: r + 1, label, threshold: mu, pointsFit: filtered.points.length, pointsTotal: errs.length, obsFit: filtered.observations.length, iterations: result.iterations, status: result.status, initialCost: result.initial_cost, finalCost: result.final_cost, fitRms, medianAll: percentile(fin, 0.5), p95All: percentile(fin, 0.95), medianObs: reproj.summary.overall.median, ms: result.ms });
-        log(`SBA ${label}, round ${r + 1}/${schedule.length} (threshold ${Number.isFinite(mu) ? mu.toFixed(1) : 'none'} px${mu > schedule[r] ? ', raised so ≤20 % of points are rejected' : ''}): fit on ${filtered.points.length}/${errs.length} points / ${filtered.observations.length} obs, ` +
+        // Verbose per-round detail: how much each camera moved and how its own error changed.
+        const before = prevReproj.summary.perView, after = reproj.summary.perView;
+        const rejectedPerCam = new Array(state.views.length).fill(0);
+        for (let i = 0; i < input0Obs.length; i++) if (!keepObs[i]) rejectedPerCam[input.meta.cameraViews[input0Obs[i].camera_idx]]++;
+        log(`  round ${r + 1} timings: rejection ${fmtMs(tSolve - tRound)}, solve ${fmtMs(solveMs)} (${result.iterations} iterations${result.chunks ? ` in ${result.chunks} chunks` : ''}), re-triangulation ${fmtMs(performance.now() - tSolve - solveMs)}`, 'debug');
+        state.views.forEach((v, vi) => {
+            const e0 = prevExtr[vi], e1 = extr[vi], i0 = prevIntr[vi], i1 = intr[vi];
+            if (!e0 || !e1 || e0.error || e1.error) return;
+            const dt = norm3(sub3(e1.tvec, e0.tvec));
+            const drot = rotationAngle(e0.R, e1.R) * 180 / Math.PI;
+            const intrTxt = config.optimize_intrinsics && i0 && i1 ? ` | fx ${i0.fx.toFixed(1)}→${i1.fx.toFixed(1)}, cx ${i0.cx.toFixed(1)}→${i1.cx.toFixed(1)}, cy ${i0.cy.toFixed(1)}→${i1.cy.toFixed(1)}, k1 ${i0.k1.toFixed(4)}→${i1.k1.toFixed(4)}` : '';
+            log(`    ${v.name.padEnd(10)} moved ${dt.toFixed(2)} mm, rotated ${drot.toFixed(3)}°, ${rejectedPerCam[vi]} obs rejected | median err ${before[vi] ? before[vi].median.toFixed(2) : '–'} → ${after[vi] ? after[vi].median.toFixed(2) : '–'} px (p95 ${before[vi] ? before[vi].p95.toFixed(1) : '–'} → ${after[vi] ? after[vi].p95.toFixed(1) : '–'})${intrTxt}`, 'debug');
+        });
+        log(`SBA ${label}, round ${r + 1}/${schedule.length} (threshold ${Number.isFinite(mu) ? mu.toFixed(1) : 'none'} px${mu > schedule[r] ? ` — schedule asked ${schedule[r].toFixed(1)}, raised to the 80th percentile so ≤20 % of points are rejected` : ''}; point-error distribution before: median ${percentile(finite, 0.5).toFixed(2)}, p80 ${percentile(finite, 0.8).toFixed(2)}, p95 ${percentile(finite, 0.95).toFixed(2)} px): fit on ${filtered.points.length}/${errs.length} points / ${filtered.observations.length} obs, ` +
             `${result.iterations} iters, cost ${result.initial_cost.toFixed(0)} → ${result.final_cost.toFixed(0)} (${result.status}, fit RMS ≈ ${fitRms.toFixed(2)} px) in ${fmtMs(result.ms)}; ` +
             `re-triangulated all observations: median ${reproj.summary.overall.median.toFixed(2)} px, p95 ${reproj.summary.overall.p95.toFixed(2)} px`, 'info');
     }
     if (!lastResult) throw new Error('bundle adjustment produced no result');
-    return { label, config, intr, extr, reproj, input, lastResult, lastInput, lastMu, roundLog };
+    return { label, config, intr, extr, reproj, input, lastResult, lastInput, lastMu, roundLog, costHistory };
 }
 
 export async function revertSba() {
@@ -334,9 +419,12 @@ export async function revertSba() {
     $('sbaResult').style.display = 'none';
     $('revertSbaBtn').style.display = 'none';
     log('Reverted to the initial (pre-SBA) calibration');
+    $('refinedResults').style.display = 'none';
     progress.show('recomputing reprojection');
     try {
         await computeReprojection((f, msg) => progress.set(f, msg));
+        state.reprojInitial = state.reproj;
+        renderSection(initialSec, state.reproj);
         progress.hide();
         renderPoseTables();
         renderStatsTable();
@@ -416,31 +504,29 @@ function renderStatsTable() {
     tbody.replaceChildren(...rows);
 }
 
-function renderReprojection() {
-    const rp = state.reproj;
+/** Refined section: current (post-SBA) reprojection, histogram overlaying initial vs refined. */
+function renderRefined(finalThreshold) {
+    const rp = state.reproj, rp0 = state.reprojInitial;
     if (!rp) return;
-    const s = rp.summary;
-    $('reprojSummary').textContent = `${s.frames} frames · ${s.points} points · mean ${s.overall.mean.toFixed(3)} px · median ${s.overall.median.toFixed(3)} · p95 ${s.overall.p95.toFixed(2)}`;
-    const frames = rp.frames.map(r => r.frame);
-    strip.setData({ frames, colorFn: (f) => errorColormap(state.reprojByFrame.get(f)?.meanErr), excluded: state.exclusions.extrinsics });
-    plot.setData(state.views.map((v, i) => ({
-        label: v.name, color: cameraColor(i),
-        points: rp.frames.filter(r => r.views[i] && isFinite(r.views[i].mean)).map(r => ({ y: r.views[i].mean, frame: r.frame, excluded: state.exclusions.extrinsics.has(r.frame), meta: { count: r.views[i].count, max: r.views[i].max } })),
-    })), { thresholds: [1], note: `mean ${s.overall.mean.toFixed(2)} · median ${s.overall.median.toFixed(2)} · n=${s.observations}` });
-    worstOrder = frames.slice().sort((a, b) => state.reprojByFrame.get(b).meanErr - state.reprojByFrame.get(a).meanErr);
-    gallery.setItems(rp.frames.map(r => ({
-        frame: r.frame, value: r.meanErr, excluded: state.exclusions.extrinsics.has(r.frame),
-        sub: state.views.map((v, i) => r.views[i] ? { name: v.name, m: r.views[i].mean } : null).filter(x => x && Number.isFinite(x.m)).sort((a, b) => b.m - a.m).slice(0, 3).map(x => `${x.name}:${x.m.toFixed(2)}`).join(' '),
-    })));
-    gallery.setCurrent(state.currentFrame);
-    strip.setCurrent(state.currentFrame);
-    refreshExclusionInfo();
+    const initialAll = rp0 ? concatAll(perCameraErrors(rp0)) : null;
+    const refinedAll = concatAll(perCameraErrors(rp));
+    const series = [];
+    if (initialAll) series.push({ label: 'initial extrinsics', color: '#9a9a9a', values: initialAll, fill: true, width: 1.2 });
+    series.push({ label: 'after bundle adjustment', color: '#60a5fa', values: refinedAll, fill: true, width: 2 });
+    const thresholds = Number.isFinite(finalThreshold) ? [{ x: finalThreshold, label: `fit threshold ${finalThreshold.toFixed(1)} px` }] : [];
+    renderSection(refinedSec, rp, { histSeries: series, thresholds, histNote: 'all observations' });
 }
 
+function currentSection() { return state.sbaResult ? refinedSec : initialSec; }
+
 function refreshExclusionViews() {
-    strip.setExcluded(state.exclusions.extrinsics);
-    gallery.updateExclusions(state.exclusions.extrinsics);
-    if (state.reproj) plot.setData(plot.groups.map(g => ({ ...g, points: g.points.map(p => ({ ...p, excluded: state.exclusions.extrinsics.has(p.frame) })) })), { thresholds: [1], note: plot.note });
+    for (const sec of [initialSec, refinedSec]) {
+        if (!sec.reproj) continue;
+        sec.strip.setExcluded(state.exclusions.extrinsics);
+        sec.gallery.updateExclusions(state.exclusions.extrinsics);
+        sec.galleryBest.updateExclusions(state.exclusions.extrinsics);
+        sec.plot.setData(sec.plot.groups.map(g => ({ ...g, points: g.points.map(p => ({ ...p, excluded: state.exclusions.extrinsics.has(p.frame) })) })), { thresholds: [1], note: sec.plot.note });
+    }
     refreshExclusionInfo();
     controllers.video.redraw();
 }
@@ -460,8 +546,10 @@ export function toggleExtrinsicsExclusion(frame) {
 }
 
 export function stepWorst(dir) {
-    if (!worstOrder.length) return;
-    const i = worstOrder.indexOf(state.currentFrame);
-    const next = i < 0 ? 0 : (i + dir + worstOrder.length) % worstOrder.length;
-    controllers.video.seekToFrame(worstOrder[next]);
+    const sec = currentSection();
+    if (!sec.reproj) return;
+    const order = sec.reproj.frames.map(r => r.frame).sort((a, b) => sec.byFrame.get(b).meanErr - sec.byFrame.get(a).meanErr);
+    const i = order.indexOf(state.currentFrame);
+    const next = i < 0 ? 0 : (i + dir + order.length) % order.length;
+    controllers.video.seekToFrame(order[next]);
 }

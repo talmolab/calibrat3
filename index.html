@@ -215,8 +215,10 @@
                         <p class="hint">Per-frame reprojection RMS after solvePnP with the calibrated intrinsics. Strip: max over cameras. Filled dots were used in calibrateCamera; hollow were evaluated only. Click a dot or column to seek; press X to exclude the current frame, then recompute.</p>
                         <div class="strip-wrap"><canvas id="intrinsicsStrip"></canvas><div class="tooltip" id="intrinsicsStripTooltip"></div></div>
                         <div class="plot-wrap"><canvas id="intrinsicsPlot"></canvas><div class="tooltip" id="intrinsicsPlotTooltip"></div></div>
-                        <h3>Worst frames <span class="muted small">(click to seek, ✕ to exclude)</span></h3>
+                        <div class="gallery-head"><h3>Frames by intrinsic reprojection error <span class="muted small">(max over cameras · click to seek, ✕ to exclude)</span></h3>
+                            <div class="seg gallery-toggle" data-worst="intrinsicsGallery" data-best="intrinsicsGalleryBest"><button class="seg-btn active" data-mode="worst">Worst frames</button><button class="seg-btn" data-mode="best">Best frames</button></div></div>
                         <div id="intrinsicsGallery"></div>
+                        <div id="intrinsicsGalleryBest" style="display:none"></div>
                     </div>
                 </div>
             </section>
@@ -256,19 +258,19 @@
                         <p class="hint">Corners seen by ≥2 cameras are triangulated and reprojected. One dot per frame per camera (mean over that frame's corners). Strip: mean over cameras.</p>
                         <div class="strip-wrap"><canvas id="extrinsicsStrip"></canvas><div class="tooltip" id="extrinsicsStripTooltip"></div></div>
                         <div class="plot-wrap"><canvas id="extrinsicsPlot"></canvas><div class="tooltip" id="extrinsicsPlotTooltip"></div></div>
-                        <div class="table-scroll"><table class="data-table" id="reprojStatsTable">
-                            <thead><tr><th>Camera</th><th>obs</th><th colspan="3">initial extrinsics (px)</th><th colspan="3">after bundle adjustment (px)</th></tr>
-                                   <tr><th></th><th></th><th>mean</th><th>median</th><th>p95</th><th>mean</th><th>median</th><th>p95</th></tr></thead>
-                            <tbody id="reprojStatsBody"></tbody>
-                        </table></div>
-                        <h3>Worst frames <span class="muted small">(click to seek, ✕ to exclude from extrinsics / SBA)</span></h3>
+                        <p class="hint">Error histogram (anipose-style): share of observations per log-spaced error bin, one curve per camera, dashed = median.</p>
+                        <div class="plot-wrap"><canvas id="extrinsicsHist"></canvas><div class="tooltip" id="extrinsicsHistTooltip"></div></div>
+                        <div class="gallery-head"><h3>Frames by cross-view error <span class="muted small">(click to seek, ✕ to exclude from extrinsics / SBA)</span></h3>
+                            <div class="seg gallery-toggle" data-worst="extrinsicsGallery" data-best="extrinsicsGalleryBest"><button class="seg-btn active" data-mode="worst">Worst frames</button><button class="seg-btn" data-mode="best">Best frames</button></div></div>
                         <div id="extrinsicsGallery"></div>
+                        <div id="extrinsicsGalleryBest" style="display:none"></div>
                     </div>
 
                     <div class="config-panel" id="sbaPanel" style="display:none">
                         <h3>Bundle adjustment <span class="muted small">(sba-solver-wasm)</span></h3>
                         <div class="config-row">
                             <div class="config-item"><label>Max iterations</label><input type="number" id="sbaMaxIterations" value="100" min="1" max="2000"></div>
+                            <div class="config-item"><label title="The solver runs in chunks of this many iterations so the progress bar, cost chart and log update live. Smaller = more frequent updates, slightly slower (damping restarts per chunk).">Report every</label><input type="number" id="sbaChunkIters" value="10" min="1" max="200" style="width:60px"> <span class="muted small">iterations</span></div>
                             <div class="config-item"><label>Robust loss</label><select id="sbaRobustLoss"><option value="huber" selected>Huber</option><option value="cauchy">Cauchy</option><option value="none">None</option></select></div>
                             <div class="config-item"><label>Loss param</label><input type="number" id="sbaLossParam" value="1.0" min="0.01" step="0.1"></div>
                             <div class="config-item"><label title="anipose-style iterative rejection: run BA, drop observations whose reprojection error exceeds a threshold that decreases geometrically from the start value to the final value, re-run. 1 round = single pass at the final threshold.">Outlier rounds</label><input type="number" id="sbaOutlierRounds" value="2" min="1" max="10"></div>
@@ -297,6 +299,24 @@
                             <div id="sbaSummary" class="mono small"></div>
                             <canvas id="sbaChart" class="sba-chart"></canvas>
                         </div>
+                    </div>
+
+                    <div id="refinedResults" style="display:none">
+                        <h3>Refined cross-view reprojection <span id="refinedSummary" class="muted small"></span></h3>
+                        <p class="hint">Same detections, re-triangulated with the bundle-adjusted cameras. The initial plots above are kept for comparison; overlays, export and the worst-frames list below use the refined calibration.</p>
+                        <div class="strip-wrap"><canvas id="refinedStrip"></canvas><div class="tooltip" id="refinedStripTooltip"></div></div>
+                        <div class="plot-wrap"><canvas id="refinedPlot"></canvas><div class="tooltip" id="refinedPlotTooltip"></div></div>
+                        <p class="hint">Histogram: all observations, initial (grey) vs refined (blue); dashed = medians; red = final outlier threshold used for the fit.</p>
+                        <div class="plot-wrap"><canvas id="refinedHist"></canvas><div class="tooltip" id="refinedHistTooltip"></div></div>
+                        <div class="table-scroll"><table class="data-table" id="reprojStatsTable">
+                            <thead><tr><th>Camera</th><th>obs</th><th colspan="3">initial extrinsics (px)</th><th colspan="3">after bundle adjustment (px)</th></tr>
+                                   <tr><th></th><th></th><th>mean</th><th>median</th><th>p95</th><th>mean</th><th>median</th><th>p95</th></tr></thead>
+                            <tbody id="reprojStatsBody"></tbody>
+                        </table></div>
+                        <div class="gallery-head"><h3>Frames by refined cross-view error <span class="muted small">(click to seek, ✕ to exclude)</span></h3>
+                            <div class="seg gallery-toggle" data-worst="refinedGallery" data-best="refinedGalleryBest"><button class="seg-btn active" data-mode="worst">Worst frames</button><button class="seg-btn" data-mode="best">Best frames</button></div></div>
+                        <div id="refinedGallery"></div>
+                        <div id="refinedGalleryBest" style="display:none"></div>
                     </div>
                 </div>
             </section>

@@ -118,3 +118,20 @@ export class FrameGallery {
         this.urls.clear();
     }
 }
+
+
+/**
+ * Wire every `.gallery-toggle` (Worst / Best segmented control) to show one of two
+ * gallery containers (`data-worst`, `data-best` ids). Call once at startup.
+ */
+export function setupGalleryToggles() {
+    for (const seg of document.querySelectorAll('.gallery-toggle')) {
+        const worst = document.getElementById(seg.dataset.worst), best = document.getElementById(seg.dataset.best);
+        seg.querySelectorAll('.seg-btn').forEach(btn => btn.addEventListener('click', () => {
+            const mode = btn.dataset.mode;
+            seg.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+            if (worst) worst.style.display = mode === 'worst' ? '' : 'none';
+            if (best) best.style.display = mode === 'best' ? '' : 'none';
+        }));
+    }
+}

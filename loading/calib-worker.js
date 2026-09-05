@@ -162,15 +162,41 @@ async function runReprojection({ requestId, store: plain, intrinsics, extrinsics
 
 // ---- bundle adjustment --------------------------------------------------------
 
-async function runSba({ requestId, input, config }) {
-    const progress = progressFn(requestId);
+async function runSba({ requestId, input, config, chunkIters }) {
     const sba = await ensureSba();
-    progress(0.05, `optimizing ${input.meta?.numPoints ?? input.points.length} points / ${input.observations.length} observations`);
+    const maxIters = Math.max(1, config.max_iterations || 100);
+    const chunk = Math.max(1, Math.min(chunkIters || 10, maxIters));
+    const total = input.observations.length;
     const t0 = performance.now();
-    const result = await sba.runBundleAdjustment({
-        cameras: input.cameras, points: input.points, observations: input.observations, point_to_frame: input.point_to_frame,
-    }, config);
-    result.ms = performance.now() - t0;
-    progress(1, 'done');
+    post({ type: 'progress', requestId, fraction: 0.02, msg: `optimizing ${input.points.length} points / ${total} observations`, detail: { iteration: 0, maxIters } });
+    // The WASM solver is one blocking call. Run it in chunks of `chunk` iterations, feeding
+    // the refined cameras/points back in, so the UI gets live iteration/cost progress.
+    // (LM damping restarts each chunk; convergence status of the last chunk is reported.)
+    let cameras = input.cameras, points = input.points;
+    let done = 0, initialCost = null, history = [], last = null;
+    const chunkCosts = [];
+    while (done < maxIters) {
+        const n = Math.min(chunk, maxIters - done);
+        const r = await sba.runBundleAdjustment({ cameras, points, observations: input.observations, point_to_frame: input.point_to_frame }, { ...config, max_iterations: n });
+        if (initialCost === null) initialCost = r.initial_cost;
+        chunkCosts.push([r.initial_cost, r.final_cost, r.iterations, r.status]);
+        if (last && r.final_cost > last.final_cost) {
+            // Should not happen (LM only accepts descent), but never hand back a worse state.
+            chunkCosts.push(['rejected chunk: cost rose', r.final_cost]);
+            break;
+        }
+        // cost_history includes the starting cost of each chunk; skip it after the first chunk
+        const h = r.cost_history || [];
+        history = history.concat(done === 0 ? h : h.slice(1));
+        done += r.iterations;
+        cameras = r.cameras; points = r.points; last = r;
+        const rmsNow = Math.sqrt(r.final_cost / Math.max(1, r.num_observations_used || total));
+        post({ type: 'progress', requestId, fraction: 0.02 + 0.96 * Math.min(1, done / maxIters),
+            msg: `iteration ${done}/${maxIters} · cost ${r.final_cost.toFixed(0)} (−${((initialCost - r.final_cost) / Math.max(1e-9, initialCost) * 100).toFixed(1)}%) · fit RMS ≈ ${rmsNow.toFixed(2)} px`,
+            detail: { iteration: done, maxIters, cost: r.final_cost, initialCost, rms: rmsNow, status: r.status, costHistory: history, ms: performance.now() - t0 } });
+        if (r.status !== 'MaxIterationsReached') break;   // converged (or stopped) inside this chunk
+    }
+    const result = { ...last, initial_cost: initialCost, iterations: done, cost_history: history, ms: performance.now() - t0, chunks: Math.ceil(done / chunk), chunkCosts };
+    post({ type: 'progress', requestId, fraction: 1, msg: 'done', detail: { iteration: done, maxIters, cost: result.final_cost, initialCost, status: result.status, costHistory: history, ms: result.ms } });
     return result;
 }
