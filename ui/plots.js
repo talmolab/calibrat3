@@ -238,6 +238,13 @@ export function drawLineChart(canvas, values, { color = '#667eea', log = true, l
  * observations on y, one stepped outline per series (e.g. per camera, or
  * initial vs refined), vertical dashed lines at each series' median.
  */
+/** Nice upper axis limit for a linear error histogram: just past the 99th percentile of all values. */
+export function histogramAxisMax(values, extra = []) {
+    const v = Array.from(values).filter(x => Number.isFinite(x) && x > 0).sort((a, b) => a - b);
+    const p99 = v.length ? v[Math.min(v.length - 1, Math.floor(v.length * 0.99))] : 1;
+    return niceStep(Math.max(0.5, Math.max(p99, ...extra) * 1.1) / 10) * 10;
+}
+
 export class ErrorHistogram {
     /**
      * @param {HTMLCanvasElement} canvas
@@ -261,7 +268,7 @@ export class ErrorHistogram {
             const v = Array.from(sr.values).filter(x => Number.isFinite(x) && x > 0).sort((a, b) => a - b);
             return { ...sr, sorted: v, median: v.length ? v[v.length >> 1] : NaN, p95: v.length ? v[Math.floor(v.length * 0.95)] : NaN, mean: v.length ? v.reduce((a, b) => a + b, 0) / v.length : NaN };
         });
-        this.thresholds = opts.thresholds || []; this.note = opts.note || '';
+        this.thresholds = opts.thresholds || []; this.note = opts.note || ''; this.xMax = opts.xMax || null;
         this.render();
     }
 
@@ -288,7 +295,7 @@ export class ErrorHistogram {
             binOf = (v) => Math.min(this.bins - 1, Math.max(0, Math.floor((Math.log10(v) - llo) / (lhi - llo) * this.bins)));
         } else {
             const p99 = this.series.map(sr => sr.sorted.length ? sr.sorted[Math.min(sr.sorted.length - 1, Math.floor(sr.sorted.length * 0.99))] : 0);
-            lo = 0; hi = niceStep(Math.max(0.5, Math.max(...p99, ...this.thresholds.map(t => t.x)) * 1.1) / 10) * 10;
+            lo = 0; hi = this.xMax || niceStep(Math.max(0.5, Math.max(...p99, ...this.thresholds.map(t => t.x)) * 1.1) / 10) * 10;
             x = (v) => pad.left + Math.min(1, Math.max(0, v / hi)) * pw;
             binOf = (v) => Math.min(this.bins - 1, Math.max(0, Math.floor(v / hi * this.bins)));
         }
