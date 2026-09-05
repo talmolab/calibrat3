@@ -73,7 +73,7 @@ onmessage = (e) => { if (!ready) queue.push(e.data); else handle(e.data); };
 function handle(msg) {
     try {
         switch (msg.type) {
-            case 'configure': configure(msg.board); break;
+            case 'configure': configure(msg.board, msg.options || {}); break;
             case 'detect': detect(msg); break;
             case 'close': dispose(); close(); break;
             default: postMessage({ type: 'error', error: `unknown message type ${msg.type}` });
@@ -94,7 +94,10 @@ function dispose() {
     det = null;
 }
 
-function configure(board) {
+let fastMarkers = true;    // search markers on a half-resolution image when the frame is large; corners are refined at full resolution
+
+function configure(board, options) {
+    fastMarkers = options.fastMarkers !== false;
     const key = boardKey(board);
     if (det && det.key === key) { postMessage({ type: 'configured', key }); return; }
     dispose();
@@ -154,10 +157,35 @@ function detect(msg) {
     src.delete();
     const t1 = performance.now();
 
-    const markerCorners = new CV.MatVector();
-    const markerIds = new CV.Mat();
+    let markerCorners = new CV.MatVector();
+    let markerIds = new CV.Mat();
     const rejected = new CV.MatVector();
-    det.arucoDetector.detectMarkers(gray, markerCorners, markerIds, rejected);
+    let searchScale = 1;
+    if (fastMarkers && Math.max(w, h) >= 1400) {
+        // Marker search at half resolution (~3-4x cheaper); the ChArUco corner interpolation +
+        // subpixel refinement below still runs on the full-resolution gray image.
+        searchScale = 0.5;
+        const small = new CV.Mat();
+        CV.resize(gray, small, new CV.Size(Math.round(w * searchScale), Math.round(h * searchScale)), 0, 0, CV.INTER_AREA);
+        det.arucoDetector.detectMarkers(small, markerCorners, markerIds, rejected);
+        small.delete();
+        if (markerIds.rows >= 4) {
+            for (let m = 0; m < markerCorners.size(); m++) {
+                const c = markerCorners.get(m);
+                const d = c.data32F;
+                for (let k = 0; k < d.length; k++) d[k] /= searchScale;
+                c.delete();
+            }
+        } else {
+            // Too few markers at half resolution (small/far board): redo at full resolution.
+            markerCorners.delete(); markerIds.delete();
+            markerCorners = new CV.MatVector(); markerIds = new CV.Mat();
+            searchScale = 1;
+            det.arucoDetector.detectMarkers(gray, markerCorners, markerIds, rejected);
+        }
+    } else {
+        det.arucoDetector.detectMarkers(gray, markerCorners, markerIds, rejected);
+    }
     const numMarkers = markerIds.rows;
     const t2 = performance.now();
 
@@ -183,7 +211,7 @@ function detect(msg) {
     const send = (blob) => {
         postMessage({
             type: 'result', requestId, frame, view, ids, corners, numMarkers,
-            ms: t3 - t0, timings: { convert: t1 - t0, markers: t2 - t1, charuco: t3 - t2 },
+            ms: t3 - t0, timings: { convert: t1 - t0, markers: t2 - t1, charuco: t3 - t2, searchScale },
             thumb: blob || null,
         }, [ids.buffer, corners.buffer]);
     };

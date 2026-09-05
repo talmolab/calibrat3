@@ -53,7 +53,10 @@ export class SwarmPlot {
         ctx.clearRect(0, 0, W, H);
         this.pts = [];
         this.grid = null;   // no stale hit-testing if we bail out below
-        const pad = { left: 58, right: 20, top: 26, bottom: 42 };
+        const nGroups = this.groups.length;
+        const bandGuess = (W - 78) / Math.max(1, nGroups);
+        const rotate = bandGuess < 95;           // many cameras: angled, shorter labels
+        const pad = { left: 58, right: 20, top: 26, bottom: rotate ? 74 : 42 };
         const pw = W - pad.left - pad.right, ph = H - pad.top - pad.bottom;
         const all = [];
         for (const g of this.groups) for (const p of g.points) if (isFinite(p.y) && p.y > 0) all.push(p.y);
@@ -129,11 +132,23 @@ export class SwarmPlot {
                 const y = yScale(med);
                 ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
                 ctx.beginPath(); ctx.moveTo(cx - band * 0.4, y); ctx.lineTo(cx + band * 0.4, y); ctx.stroke();
-                ctx.fillStyle = '#ddd'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
-                ctx.fillText(med.toFixed(2), cx + band * 0.41, y + 3);
+                if (!rotate) {
+                    ctx.fillStyle = '#ddd'; ctx.font = '10px monospace'; ctx.textAlign = 'left';
+                    ctx.fillText(med.toFixed(2), cx + band * 0.41, y + 3);
+                }
             }
-            ctx.fillStyle = g.color; ctx.font = 'bold 12px system-ui, sans-serif'; ctx.textAlign = 'center';
-            ctx.fillText(`${g.label} (n=${ys.length})`, cx, H - pad.bottom + 18);
+            ctx.fillStyle = g.color;
+            if (rotate) {
+                ctx.save();
+                ctx.translate(cx, H - pad.bottom + 8);
+                ctx.rotate(-Math.PI / 4);
+                ctx.font = `${bandGuess < 40 ? 10 : 11}px system-ui, sans-serif`; ctx.textAlign = 'right';
+                ctx.fillText(g.label, 0, 0);
+                ctx.restore();
+            } else {
+                ctx.font = 'bold 12px system-ui, sans-serif'; ctx.textAlign = 'center';
+                ctx.fillText(`${g.label} (n=${ys.length})`, cx, H - pad.bottom + 18);
+            }
         });
         // axes
         ctx.strokeStyle = '#555'; ctx.lineWidth = 1.5;

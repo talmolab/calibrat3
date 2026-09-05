@@ -144,6 +144,7 @@
                         <div class="config-row">
                             <div class="config-item"><label>Target samples</label><input type="number" id="targetSamples" value="100" min="1" step="10"></div>
                             <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="allFramesCheck"><span>every frame</span></label></div>
+                            <div class="config-item"><label class="overlay-checkbox" title="Search ArUco markers on a half-resolution image when frames are ≥1400 px wide (about 2× faster per frame with a board, but small or far boards lose corners and empty frames cost a second pass). ChArUco corners are still refined at full resolution."><input type="checkbox" id="fastDetectCheck"><span>fast marker search</span></label></div>
                             <div class="config-item"><label>Stride</label><span id="computedStride" class="mono">–</span></div>
                             <div class="config-item"><label>Frames to process</label><span id="framesToProcess" class="mono">–</span></div>
                             <div class="config-item"><label>Workers</label><span id="poolInfo" class="mono">–</span></div>
@@ -189,8 +190,14 @@
                         <div class="config-row">
                             <div class="config-item"><label>Min corners / frame</label><input type="number" id="minCorners" value="6" min="4" max="200"></div>
                             <div class="config-item"><label title="Frames used by calibrateCamera per camera; chosen greedily for image coverage. 0 = use all valid frames.">Max frames / camera</label><input type="number" id="maxCalibFrames" value="50" min="0" step="10"></div>
-                            <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="fixK3"><span>fix k3 = 0</span></label></div>
-                            <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="zeroTangent"><span>zero tangential</span></label></div>
+                            <div class="config-item"><label title="Radial/tangential distortion terms to fit. Fewer terms generalize better across cameras: on an 18-camera rig the k1-only model (what anipose uses) gave the lowest cross-view error even though its per-camera RMS is higher. Use richer models only for strongly distorting lenses with boards covering the whole image.">Distortion model</label>
+                                <select id="distModel">
+                                    <option value="k1" selected>k1 only (anipose-style)</option>
+                                    <option value="k1k2">k1, k2</option>
+                                    <option value="k1k2k3">k1, k2, k3</option>
+                                    <option value="full">full: k1, k2, k3, p1, p2</option>
+                                </select>
+                            </div>
                         </div>
                         <div class="config-row">
                             <button id="computeIntrinsicsBtn" disabled>Compute intrinsics</button>
@@ -201,10 +208,10 @@
                     </div>
 
                     <div id="intrinsicsResults" style="display:none">
-                        <table class="data-table" id="intrinsicsTable">
+                        <div class="table-scroll"><table class="data-table" id="intrinsicsTable">
                             <thead><tr><th>Camera</th><th>fx</th><th>fy</th><th>cx</th><th>cy</th><th>k1</th><th>k2</th><th>p1</th><th>p2</th><th>k3</th><th>frames</th><th>coverage</th><th>RMS (px)</th><th>median (px)</th></tr></thead>
                             <tbody id="intrinsicsTableBody"></tbody>
-                        </table>
+                        </table></div>
                         <p class="hint">Per-frame reprojection RMS after solvePnP with the calibrated intrinsics. Strip: max over cameras. Filled dots were used in calibrateCamera; hollow were evaluated only. Click a dot or column to seek; press X to exclude the current frame, then recompute.</p>
                         <div class="strip-wrap"><canvas id="intrinsicsStrip"></canvas><div class="tooltip" id="intrinsicsStripTooltip"></div></div>
                         <div class="plot-wrap"><canvas id="intrinsicsPlot"></canvas><div class="tooltip" id="intrinsicsPlotTooltip"></div></div>
@@ -226,6 +233,7 @@
                             <div class="config-item"><label>Reference camera</label><select id="referenceCamera"></select></div>
                             <div class="config-item"><label>Min covisible corners</label><input type="number" id="minCovisible" value="10" min="4" max="200"></div>
                             <div class="config-item"><label title="Per camera pair, subsample covisible frames for the initial relative pose (0 = all)">Max frames / pair</label><input type="number" id="maxPairFrames" value="300" min="0" step="50"></div>
+                            <div class="config-item"><label title="Exclude frames where the board moves faster than this (mean corner displacement in px per frame, max over cameras) from the covisibility graph and from bundle adjustment. With sub-frame timing differences between cameras, fast frames are inconsistent across views. 0 = off. The log reports the motion distribution after each extrinsics run.">Max board motion (px/frame, 0=off)</label><input type="number" id="maxMotion" value="0" min="0" step="1"></div>
                         </div>
                         <div class="config-row">
                             <button id="computeExtrinsicsBtn" disabled>Compute extrinsics</button>
@@ -236,24 +244,23 @@
                     </div>
 
                     <div id="extrinsicsResults" style="display:none">
-                        <div class="two-col">
-                            <div>
-                                <h3>Covisibility (frames per pair)</h3>
-                                <div id="covisTable"></div>
-                                <p id="chainInfo" class="muted small"></p>
-                            </div>
-                            <div>
-                                <h3>Camera poses <span class="muted small">(world = reference camera)</span></h3>
-                                <table class="data-table" id="extrinsicsTable">
-                                    <thead><tr><th>Camera</th><th>rx</th><th>ry</th><th>rz</th><th>tx</th><th>ty</th><th>tz</th><th>via</th><th>pair σt</th></tr></thead>
-                                    <tbody id="extrinsicsTableBody"></tbody>
-                                </table>
-                            </div>
-                        </div>
+                        <h3>Covisibility <span class="muted small">(frames per camera pair · outlined cells = pose-chain edges)</span></h3>
+                        <div class="table-scroll" id="covisTable"></div>
+                        <p id="chainInfo" class="muted small"></p>
+                        <h3>Camera poses <span class="muted small">(world = reference camera)</span></h3>
+                        <div class="table-scroll"><table class="data-table" id="extrinsicsTable">
+                            <thead><tr><th>Camera</th><th>rx</th><th>ry</th><th>rz</th><th>tx</th><th>ty</th><th>tz</th><th>via</th><th>pair σt</th></tr></thead>
+                            <tbody id="extrinsicsTableBody"></tbody>
+                        </table></div>
                         <h3>Cross-view reprojection <span id="reprojSummary" class="muted small"></span></h3>
                         <p class="hint">Corners seen by ≥2 cameras are triangulated and reprojected. One dot per frame per camera (mean over that frame's corners). Strip: mean over cameras.</p>
                         <div class="strip-wrap"><canvas id="extrinsicsStrip"></canvas><div class="tooltip" id="extrinsicsStripTooltip"></div></div>
                         <div class="plot-wrap"><canvas id="extrinsicsPlot"></canvas><div class="tooltip" id="extrinsicsPlotTooltip"></div></div>
+                        <div class="table-scroll"><table class="data-table" id="reprojStatsTable">
+                            <thead><tr><th>Camera</th><th>obs</th><th colspan="3">initial extrinsics (px)</th><th colspan="3">after bundle adjustment (px)</th></tr>
+                                   <tr><th></th><th></th><th>mean</th><th>median</th><th>p95</th><th>mean</th><th>median</th><th>p95</th></tr></thead>
+                            <tbody id="reprojStatsBody"></tbody>
+                        </table></div>
                         <h3>Worst frames <span class="muted small">(click to seek, ✕ to exclude from extrinsics / SBA)</span></h3>
                         <div id="extrinsicsGallery"></div>
                     </div>
@@ -264,13 +271,15 @@
                             <div class="config-item"><label>Max iterations</label><input type="number" id="sbaMaxIterations" value="100" min="1" max="2000"></div>
                             <div class="config-item"><label>Robust loss</label><select id="sbaRobustLoss"><option value="huber" selected>Huber</option><option value="cauchy">Cauchy</option><option value="none">None</option></select></div>
                             <div class="config-item"><label>Loss param</label><input type="number" id="sbaLossParam" value="1.0" min="0.01" step="0.1"></div>
-                            <div class="config-item"><label>Outlier threshold (px, 0=off)</label><input type="number" id="sbaOutlierThreshold" value="30" min="0" step="1"></div>
+                            <div class="config-item"><label title="anipose-style iterative rejection: run BA, drop observations whose reprojection error exceeds a threshold that decreases geometrically from the start value to the final value, re-run. 1 round = single pass at the final threshold.">Outlier rounds</label><input type="number" id="sbaOutlierRounds" value="2" min="1" max="10"></div>
+                            <div class="config-item"><label title="Final per-observation reprojection error threshold in pixels; observations above it are excluded from the fit. 0 = keep everything.">Final threshold (px)</label><input type="number" id="sbaOutlierThreshold" value="3" min="0" step="0.5"></div>
+                            <div class="config-item"><label title="Threshold for the first round; 0 = automatic (95th percentile of the initial errors, at least 3x the final threshold).">Start threshold (px, 0=auto)</label><input type="number" id="sbaOutlierStart" value="0" min="0" step="1"></div>
                             <div class="config-item"><label title="Cap on 3D points sent to the solver (frames are subsampled evenly). 0 = all.">Max points</label><input type="number" id="sbaMaxPoints" value="20000" min="0" step="5000"></div>
                         </div>
                         <div class="config-row">
                             <div class="config-item"><label>Optimize</label>
                                 <label class="overlay-checkbox"><input type="checkbox" id="sbaOptExtrinsics" checked><span>extrinsics</span></label>
-                                <label class="overlay-checkbox"><input type="checkbox" id="sbaOptIntrinsics" checked><span>intrinsics</span></label>
+                                <label class="overlay-checkbox"><input type="checkbox" id="sbaOptIntrinsics" checked><span title="The solver frees all 9 intrinsic parameters per camera (fx, fy, cx, cy, k1..k3, p1, p2). If that makes the re-triangulated error worse (typical for boards that never reach the image corners) the refinement automatically retries with intrinsics fixed and keeps the better result.">intrinsics</span></label>
                                 <label class="overlay-checkbox"><input type="checkbox" id="sbaOptPoints" checked><span>3D points</span></label>
                             </div>
                             <div class="config-item"><label>Tolerances</label>

@@ -35,7 +35,26 @@ rendered, detected on the main thread and appended DOM per frame. Here:
    TRANSFERRED to `detect-worker.js` (OpenCV.js in the worker; dictionary/board/
    detectors cached per board config) and closed there. Per-view in-flight cap is
    2. Thumbnails (160 px JPEG Blobs, view 0) are produced by the worker from the
-   frame it already has — never re-decoded.
+   frame it already has — never re-decoded. The pool uses most cores
+   (`min(12, hardwareConcurrency - 2)` workers). "Fast marker search" (opt-in)
+   finds markers on a half-resolution image and refines corners at full
+   resolution: ~2x faster on frames with a board, but small/far boards lose
+   corners, so it is off by default.
+1b. **Display decode is streaming** (`_decodeForDisplay`). The decoder stays OPEN
+   between seeks: stepping/playback feeds only the next chunk(s) and waits for the
+   target frame to be emitted (outputs come in presentation order); everything the
+   decoder emits from the target on is kept, up to `lookahead + reorder depth`, so
+   the next steps are cache hits. Only a backward/far seek restarts at the
+   preceding keyframe. The bytes of the current GOP are read once per view
+   (`readSampleRange` GOP cache) — `File.slice()` round-trips cost tens of ms each
+   with 18 views. The output delay of B-frame decoders is learned per decoder
+   (`_reorderFeed` grows on a timeout); while `decodeQueueSize > 0` we just wait.
+   `ui/video-panel.js` budgets ImageBitmaps (~640 MB total): with many/large views
+   the display cache holds reduced-resolution bitmaps (`bitmapScale`, drawn scaled
+   onto the native-size canvas — overlays stay native) so >= 12 frames per view fit.
+   Measured on the 18 x 1680x1200 session: 1.0 decode per displayed frame per view,
+   0 keyframe restarts while stepping (it was ~10 decodes and a GOP restart every
+   frame before).
 2. **Calibration** (`calib-worker.js`, classic workers that `importScripts`
    opencv.js and `import()` the ESM calib modules + the sba wrapper; a small pool
    via `loading/calib-client.js` so per-camera intrinsics run in parallel) runs
@@ -67,6 +86,51 @@ with a sorted `frames: Int32Array` (binary search to look up). Exclusions are
 - `state.extrinsics[v]`: `{R, rvec, tvec, chain, pairStd}` or `{error}`; reference = identity.
 - `state.reproj`: `{frames:[{frame, n, ids, xyz, views:[{mask, det, proj, err, mean, max, count}|null], meanErr, maxErr}], summary}`;
   `state.reprojByFrame` is its Map index.
+
+### Bundle adjustment with anipose-style outlier rejection (`ui/stage-extrinsics.js` runSba)
+
+Rounds with a geometric per-POINT error threshold from a start value (default: p95 of
+the initial per-point errors) down to the final value (default 3 px); each round
+fits only points whose mean reprojection error is below the threshold, then applies
+the refined cameras, re-triangulates ALL points in the worker and recomputes errors
+(so the report is on all observations, never just the kept subset). The threshold is
+floored at the 80th percentile of the current per-point errors so a round never
+rejects more than ~20 % of points — an early version rejected per observation with
+no floor, kept 20 % of the data and made the 18-camera fit worse. `state.sbaResult.rounds`
+records each round; the before/after table (`#reprojStatsTable`) compares initial and
+refined per-camera stats. The solver's own `outlier_threshold` is left at 0.
+
+### Intrinsic model: fewer distortion terms generalize better across cameras
+
+`Distortion model` in stage 3 maps to calibrateCamera flags (`ui/stage-intrinsics.js`
+`distortionFlags`): `k1` (FIX_K2|FIX_K3|ZERO_TANGENT, default, what anipose fits),
+`k1k2`, `k1k2k3`, `full`. Measured on the 18-camera session (same detections, initial
+extrinsics only): full 5-param model -> cross-view median 12.74 px, k1+k2 -> 12.13,
+**k1 only -> 10.27** (the anipose reference: 10.80). Per-camera RMS goes the other way
+(0.33 -> 1.41 px): the richer models fit per-camera systematic effects (motion / rolling
+shutter / board flatness) that do not transfer across views. On the 4-camera sample the
+k1 model also helps (initial 5.8 -> 5.2, after SBA 3.6 -> 2.4 px). The synthetic stress
+test selects `full` because its ground truth has k2 != 0.
+
+### What "good" looks like on real data
+
+On the 18-camera / 1800-frame HEVC session (`/root/vast/eric/calibration_test`, transcoded
+to H.264 for headless tests) the anipose `calibration.toml` shipped with it scores a
+**10.8 px median** cross-view reprojection error on our detections. Things established
+experimentally there (see `tests/e2e/real-session.mjs` and the scratch probes in git
+history of this file): integer frame shifts of any camera only make it worse (cameras
+are frame-synchronized); the board never holds still (median 56 px/frame, slowest
+quartile 40 px/frame) so a motion filter cannot help on this recording; SBA with free
+3D points lowers its own cost without lowering the DLT-triangulated error, and freeing
+all 9 intrinsic parameters makes it worse — hence model selection in `runSba`. Judge
+changes by "median over all observations vs the reference on the same detections", not
+by absolute pixel numbers; the per-frame error swings 4–47 px on this data.
+
+Current result on that session (600 sampled frames, defaults: k1-only intrinsics, 2 SBA
+rounds, model selection): initial extrinsics 10.27 px median, after SBA **7.27 px median /
+22.3 px p95** vs the anipose reference's 10.80 / 48.9 on the same detections; camera-pair
+distances within 6 mm (median) of anipose's. Wall clock in headless Chromium (CPU only,
+12 detect workers): detection 600x18 in 200 s, intrinsics 123 s, extrinsics 3 s, SBA 184 s.
 
 ### Board convention
 

@@ -45,8 +45,8 @@ export function setupDetectStage() {
         tooltipEl: $('detectionStripTooltip'),
         tooltip: (f) => {
             const s = state.detections;
-            const parts = state.views.map((v, i) => `${v.name}:${s.count(f, i)}`);
-            return `frame ${f}\ncommon ${s.commonCount(f)} · ${parts.join(' ')}`;
+            const parts = state.views.map((v, i) => `${v.name.padEnd(10)} ${s.count(f, i)}`);
+            return `frame ${f} · common ${s.commonCount(f)}\n${parts.join('\n')}`;
         },
         onClick: (f) => controllers.video.seekToFrame(f),
     });
@@ -124,7 +124,7 @@ export async function detectCurrentFrame() {
     const t0 = performance.now();
     try {
         $('detectCurrentResult').textContent = 'detecting…';
-        await pool.configure(board);
+        await pool.configure(board, { fastMarkers: $('fastDetectCheck').checked });
         const results = await Promise.all(state.views.map(async (view, v) => {
             const r = await view.decoder.getFrame(frame);
             if (!r) return null;
@@ -193,7 +193,7 @@ export async function runBatchDetection() {
     const ticker = setInterval(() => update(false), 200);
 
     try {
-        await pool.configure(board);
+        await pool.configure(board, { fastMarkers: $('fastDetectCheck').checked });
         const t1 = performance.now();
         await Promise.all(state.views.map(async (view, v) => {
             const inflight = new Set();

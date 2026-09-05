@@ -42,6 +42,9 @@ export const state = {
     /** @type {{frames:object[], summary:object}|null} */
     reproj: null,
     reprojByFrame: new Map(),
+    reprojInitialSummary: null,   // cross-view summary from the initial extrinsics (before SBA)
+    motionScores: null,           // Map<frame, px/frame> board motion (calib/motion.js)
+    motionExcluded: null,         // Set<frame> above the motion threshold (excluded from graph + SBA)
     sbaResult: null,
     referenceView: 0,
 
@@ -84,6 +87,9 @@ export function resetCalibrationState() {
     state.extrinsicsMeta = null;
     state.reproj = null;
     state.reprojByFrame = new Map();
+    state.reprojInitialSummary = null;
+    state.motionScores = null;
+    state.motionExcluded = null;
     state.sbaResult = null;
     state.exclusions.intrinsics = new Set();
     state.exclusions.extrinsics = new Set();
@@ -96,6 +102,9 @@ export function resetDownstreamOfDetection() {
     state.extrinsicsMeta = null;
     state.reproj = null;
     state.reprojByFrame = new Map();
+    state.reprojInitialSummary = null;
+    state.motionScores = null;
+    state.motionExcluded = null;
     state.sbaResult = null;
     state.exclusions.intrinsics = new Set();
     state.exclusions.extrinsics = new Set();
