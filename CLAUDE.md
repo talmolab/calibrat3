@@ -121,8 +121,8 @@ damping are harmless (they even escape plateaus); a chunk that ends with a highe
 rejected and the previous state kept. Per round the log lists per camera: translation /
 rotation change, observations rejected, median/p95 before → after, intrinsic changes.
 The UI keeps the initial reprojection plots in the extrinsics section and adds a
-"Refined cross-view reprojection" section under the SBA panel (strip, swarm, anipose-style
-log-binned histogram initial vs refined, per-camera table, Worst/Best frame galleries).
+"Refined cross-view reprojection" section under the SBA panel (strip, swarm, error
+histogram (linear bins, overflow bin past the 99th percentile) initial vs refined, per-camera table, Worst/Best frame galleries).
 `state.reprojInitial` holds the full initial result for those plots.
 
 ### Intrinsic model: fewer distortion terms generalize better across cameras

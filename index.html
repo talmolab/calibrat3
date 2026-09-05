@@ -258,7 +258,7 @@
                         <p class="hint">Corners seen by ≥2 cameras are triangulated and reprojected. One dot per frame per camera (mean over that frame's corners). Strip: mean over cameras.</p>
                         <div class="strip-wrap"><canvas id="extrinsicsStrip"></canvas><div class="tooltip" id="extrinsicsStripTooltip"></div></div>
                         <div class="plot-wrap"><canvas id="extrinsicsPlot"></canvas><div class="tooltip" id="extrinsicsPlotTooltip"></div></div>
-                        <p class="hint">Error histogram (anipose-style): share of observations per log-spaced error bin, one curve per camera, dashed = median.</p>
+                        <p class="hint">Error histogram: share of observations per error bin (linear axis; the last bin collects everything beyond it), one curve per camera, dashed = median.</p>
                         <div class="plot-wrap"><canvas id="extrinsicsHist"></canvas><div class="tooltip" id="extrinsicsHistTooltip"></div></div>
                         <div class="gallery-head"><h3>Frames by cross-view error <span class="muted small">(click to seek, ✕ to exclude from extrinsics / SBA)</span></h3>
                             <div class="seg gallery-toggle" data-worst="extrinsicsGallery" data-best="extrinsicsGalleryBest"><button class="seg-btn active" data-mode="worst">Worst frames</button><button class="seg-btn" data-mode="best">Best frames</button></div></div>

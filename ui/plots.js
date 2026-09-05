@@ -198,6 +198,8 @@ function hash01(n) {
     return ((x >>> 16) & 0xffff) / 0x10000;
 }
 
+function fmtTick(v) { return v < 1 ? v.toFixed(2).replace(/0+$/, '').replace(/\.$/, '') : (Number.isInteger(v) ? String(v) : v.toFixed(1)); }
+
 function niceStep(raw) {
     const p = 10 ** Math.floor(Math.log10(raw || 1));
     const m = raw / p;
@@ -244,7 +246,7 @@ export class ErrorHistogram {
      */
     constructor(canvas, tooltipEl, opts = {}) {
         this.canvas = canvas; this.ctx = canvas.getContext('2d'); this.tooltip = tooltipEl || null;
-        this.height = opts.height ?? 250; this.bins = opts.bins ?? 48; this.xLabel = opts.xLabel || 'reprojection error (px, log scale)';
+        this.height = opts.height ?? 250; this.bins = opts.bins ?? 48; this.logX = opts.logX ?? false; this.xLabel = opts.xLabel || (this.logX ? 'reprojection error (px, log scale)' : 'reprojection error (px)');
         this.series = []; this.thresholds = []; this._binsCache = null;
         new ResizeObserver(() => this.render()).observe(canvas.parentElement || canvas);
         this._bind();
@@ -275,17 +277,30 @@ export class ErrorHistogram {
         const legendRows = this._legendRows(ctx, W - 68);
         const pad = { left: 52, right: 16, top: 14, bottom: 40 + legendRows * 15 };
         const pw = W - pad.left - pad.right, ph = H - pad.top - pad.bottom;
-        const lo = Math.max(0.01, Math.min(...all) * 0.8), hi = Math.max(...all) * 1.2;
-        const llo = Math.log10(lo), lhi = Math.log10(hi);
-        const x = (v) => pad.left + (Math.log10(Math.max(lo, v)) - llo) / (lhi - llo) * pw;
-        const edges = Array.from({ length: this.bins + 1 }, (_, i) => 10 ** (llo + (lhi - llo) * i / this.bins));
+        // Linear axis from 0 to just past the 99th percentile of all series; anything beyond
+        // lands in the last (overflow) bin so a few wild outliers don't stretch the axis.
+        // (logX: true gives log-spaced bins instead.)
+        let lo, hi, x, binOf;
+        if (this.logX) {
+            lo = Math.max(0.01, Math.min(...all) * 0.8); hi = Math.max(...all) * 1.2;
+            const llo = Math.log10(lo), lhi = Math.log10(hi);
+            x = (v) => pad.left + (Math.log10(Math.max(lo, v)) - llo) / (lhi - llo) * pw;
+            binOf = (v) => Math.min(this.bins - 1, Math.max(0, Math.floor((Math.log10(v) - llo) / (lhi - llo) * this.bins)));
+        } else {
+            const p99 = this.series.map(sr => sr.sorted.length ? sr.sorted[Math.min(sr.sorted.length - 1, Math.floor(sr.sorted.length * 0.99))] : 0);
+            lo = 0; hi = niceStep(Math.max(0.5, Math.max(...p99, ...this.thresholds.map(t => t.x)) * 1.1) / 10) * 10;
+            x = (v) => pad.left + Math.min(1, Math.max(0, v / hi)) * pw;
+            binOf = (v) => Math.min(this.bins - 1, Math.max(0, Math.floor(v / hi * this.bins)));
+        }
+        const edges = Array.from({ length: this.bins + 1 }, (_, i) => this.logX ? 10 ** (Math.log10(lo) + (Math.log10(hi) - Math.log10(lo)) * i / this.bins) : hi * i / this.bins);
         const hists = this.series.map(sr => {
             const h = new Float32Array(this.bins);
-            for (const v of sr.sorted) { const b = Math.min(this.bins - 1, Math.max(0, Math.floor((Math.log10(v) - llo) / (lhi - llo) * this.bins))); h[b]++; }
+            for (const v of sr.sorted) h[binOf(v)]++;
             const n = sr.sorted.length || 1;
             for (let i = 0; i < this.bins; i++) h[i] /= n;
             return h;
         });
+        const llo = Math.log10(Math.max(1e-9, lo)), lhi = Math.log10(hi);
         const ymax = Math.max(1e-6, ...hists.map(h => Math.max(...h))) * 1.08;
         const y = (f) => pad.top + ph - (f / ymax) * ph;
         this._binsCache = { edges, hists, pad, pw, ph, x, llo, lhi };
@@ -293,7 +308,12 @@ export class ErrorHistogram {
         ctx.strokeStyle = '#2c2c2c'; ctx.lineWidth = 1; ctx.fillStyle = '#888'; ctx.font = '11px monospace'; ctx.textAlign = 'right';
         for (const f of [0.25, 0.5, 0.75, 1].map(k => k * ymax / 1.08)) { const yy = y(f); ctx.beginPath(); ctx.moveTo(pad.left, yy); ctx.lineTo(W - pad.right, yy); ctx.stroke(); ctx.fillText(`${(f * 100).toFixed(0)}%`, pad.left - 6, yy + 4); }
         ctx.textAlign = 'center';
-        for (let e = Math.floor(llo); e <= Math.ceil(lhi); e++) for (const m of [1, 2, 5]) { const v = m * 10 ** e; if (v < lo || v > hi) continue; const xx = x(v); ctx.strokeStyle = m === 1 ? '#3a3a3a' : '#262626'; ctx.beginPath(); ctx.moveTo(xx, pad.top); ctx.lineTo(xx, pad.top + ph); ctx.stroke(); ctx.fillStyle = '#888'; ctx.fillText(v < 1 ? v.toFixed(v < 0.1 ? 2 : 1) : String(v), xx, H - pad.bottom + 16); }
+        if (this.logX) {
+            for (let e = Math.floor(llo); e <= Math.ceil(lhi); e++) for (const m of [1, 2, 5]) { const v = m * 10 ** e; if (v < lo || v > hi) continue; const xx = x(v); ctx.strokeStyle = m === 1 ? '#3a3a3a' : '#262626'; ctx.beginPath(); ctx.moveTo(xx, pad.top); ctx.lineTo(xx, pad.top + ph); ctx.stroke(); ctx.fillStyle = '#888'; ctx.fillText(v < 1 ? v.toFixed(v < 0.1 ? 2 : 1) : String(v), xx, H - pad.bottom + 16); }
+        } else {
+            const step = niceStep(hi / 8);
+            for (let v = 0; v <= hi + 1e-9; v += step) { const xx = x(v); ctx.strokeStyle = '#2c2c2c'; ctx.beginPath(); ctx.moveTo(xx, pad.top); ctx.lineTo(xx, pad.top + ph); ctx.stroke(); ctx.fillStyle = '#888'; ctx.fillText(v >= hi - 1e-9 ? `≥${fmtTick(v)}` : fmtTick(v), xx, H - pad.bottom + 16); }
+        }
         ctx.fillStyle = '#aaa'; ctx.font = '12px system-ui, sans-serif'; ctx.fillText(this.xLabel, pad.left + pw / 2, pad.top + ph + 32);
         // series
         this.series.forEach((sr, si) => {
@@ -344,7 +364,8 @@ export class ErrorHistogram {
             this.tooltip.style.display = 'block';
             this.tooltip.style.left = `${Math.min(pr.width - 200, ev.clientX - pr.left + 12)}px`;
             this.tooltip.style.top = `${ev.clientY - pr.top - 10}px`;
-            this.tooltip.textContent = `${edges[b].toFixed(2)} – ${edges[b + 1].toFixed(2)} px\n` + this.series.map((sr, i) => `${sr.label}: ${(hists[i][b] * 100).toFixed(1)}% (${Math.round(hists[i][b] * sr.sorted.length)})`).join('\n');
+            const last = (b === this.bins - 1 && !this.logX);
+            this.tooltip.textContent = `${edges[b].toFixed(2)} – ${last ? '∞' : edges[b + 1].toFixed(2)} px\n` + this.series.map((sr, i) => `${sr.label}: ${(hists[i][b] * 100).toFixed(1)}% (${Math.round(hists[i][b] * sr.sorted.length)})`).join('\n');
             void llo; void lhi;
         });
         this.canvas.addEventListener('mouseleave', () => { if (this.tooltip) this.tooltip.style.display = 'none'; });
