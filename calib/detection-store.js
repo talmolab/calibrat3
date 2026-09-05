@@ -151,6 +151,21 @@ export class DetectionStore {
         return { frames: frames.length, framesWithAnyDetection: anyDet, framesAllViewsGood: good, perView };
     }
 
+    /**
+     * Structured-clone-friendly form for postMessage (Map + typed arrays are
+     * cloned natively; no base64). Only the fields the worker needs.
+     */
+    toPlain() {
+        return { viewNames: this.viewNames, frames: this._frames };
+    }
+
+    static fromPlain(obj) {
+        const store = new DetectionStore(obj.viewNames);
+        store._frames = obj.frames instanceof Map ? obj.frames : new Map(obj.frames);
+        store._sortedFrames = null;
+        return store;
+    }
+
     /** Serialize to a JSON-friendly object (typed arrays -> base64). */
     toJSON() {
         const frames = [];
