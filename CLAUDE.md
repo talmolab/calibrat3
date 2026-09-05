@@ -92,9 +92,23 @@ The vibe's export used `col·s` — inconsistent; fixed here.
 ```bash
 python3 server.py 8080          # static + HTTP Range (python -m http.server also works)
 node tests/run-mjs-tests.mjs    # unit tests (pure modules; Node ≥ 18)
+# browser: http://localhost:8080/tests/test-runner.html  (same test files, tests/harness.mjs reports to the page)
+# e2e (Playwright, headless Chromium): tests/e2e/README.md
+node tests/e2e/smoke-pipeline.mjs
+SESSION=/tmp/synthetic_session node tests/e2e/stress-synthetic.mjs   # after scripts/make_synthetic_session.py
 ```
 
 `package.json` (`"type": "module"`) exists only so Node runs the `.js` ESM sources.
+Test files must stay environment-agnostic (no `node:` imports outside
+`tests/harness.mjs`'s `isNode` branches) so the browser runner can load them.
+
+Reference numbers (headless Chromium, no GPU, shared CPU): sample session (4 × 21
+frames) detects in ~2 s; the synthetic 4 × 1200-frame session detects every frame in
+~2.5 min at ~34 detections/s (≈105 ms per 1280×1024 frame inside a worker, 4 workers)
+with the main-thread rAF heartbeat never gapping more than ~100 ms and ~2% decode
+overhead (1229 decoded per 1200 wanted). The original calibration-studio on the sample
+session: initial cross-view median 10.5 px → 6.5 px after SBA; calibrat3: 5.8 → 3.7 px
+with intrinsics/translations matching to ~1 mm.
 
 ## Deploy
 
@@ -105,6 +119,10 @@ PR under `pr/<n>/` and posts a sticky comment. Repo settings required: Pages sou
 
 ## Gotchas
 
+- **Never `await cv`.** OpenCV.js's Emscripten build sets `cv.then(cb)` but that `then`
+  returns the module itself (a thenable), so `await cv` / `resolve(cv)` recurse forever
+  with no error — the workers silently never become ready. Use the `whenOpenCVReady`
+  pattern (wrap the module in a plain object) as in both workers / `loading/opencv-ready.js`.
 - `pool.detect()` transfers the image: never pass a cached `ImageBitmap` from the
   decoder LRU — `createImageBitmap(bitmap)` a copy first (see `detectCurrentFrame`).
 - Interactive seeks during a batch run share the decoder queue per view; the GOP

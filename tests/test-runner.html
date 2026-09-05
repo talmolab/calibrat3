@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <title>calibrat3 test suite</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: 'SF Mono', 'Fira Code', Consolas, ui-monospace, monospace; background: #161616; color: #e0e0e0; margin: 0; padding: 20px; font-size: 13px; }
+        h1 { color: #667eea; margin: 0 0 4px; font-size: 20px; }
+        .subtitle { color: #888; margin-bottom: 16px; }
+        .subtitle a { color: #9aa8f0; }
+        .summary { padding: 10px 16px; border-radius: 6px; font-size: 15px; font-weight: 600; margin-bottom: 16px; border: 1px solid #333; background: #222; }
+        .summary.all-passed { background: rgba(74, 222, 128, .12); color: #4ade80; border-color: rgba(74, 222, 128, .35); }
+        .summary.has-failures { background: rgba(255, 107, 107, .12); color: #ff6b6b; border-color: rgba(255, 107, 107, .35); }
+        .suite { background: #1f1f1f; border: 1px solid #333; border-radius: 6px; margin-bottom: 12px; overflow: hidden; }
+        .suite-header { padding: 8px 14px; background: #262626; display: flex; justify-content: space-between; font-weight: 600; }
+        .suite-header .count { color: #888; font-weight: 400; }
+        .test { padding: 4px 14px; border-top: 1px solid #262626; display: flex; gap: 10px; align-items: baseline; }
+        .test .status { width: 44px; flex-shrink: 0; font-weight: 700; }
+        .test.pass .status { color: #4ade80; }
+        .test.fail .status { color: #ff6b6b; }
+        .test .ms { color: #666; margin-left: auto; }
+        .test pre { width: 100%; margin: 4px 0 4px 54px; color: #ffb4b4; white-space: pre-wrap; font-size: 12px; }
+        .running { color: #fbbf24; }
+    </style>
+</head>
+<body>
+    <h1>calibrat3 test suite</h1>
+    <div class="subtitle">Pure-logic unit tests (calib/, import-export/) running in this browser. The same files run in Node via <code>node tests/run-mjs-tests.mjs</code>. <a href="../index.html">← app</a></div>
+    <div id="summary" class="summary running">Running…</div>
+    <div id="suites"></div>
+
+    <script type="module">
+        const FILES = [
+            'test-board.mjs',
+            'test-geometry.mjs',
+            'test-detection-store.mjs',
+            'test-covisibility.mjs',
+            'test-frame-selection.mjs',
+            'test-folder-loader.mjs',
+            'test-toml.mjs',
+        ];
+        const suitesEl = document.getElementById('suites');
+        const summaryEl = document.getElementById('summary');
+        let totalPass = 0, totalFail = 0;
+        const results = [];
+
+        for (const file of FILES) {
+            const suite = document.createElement('div');
+            suite.className = 'suite';
+            const header = document.createElement('div');
+            header.className = 'suite-header';
+            header.innerHTML = `<span>${file}</span><span class="count running">running…</span>`;
+            suite.appendChild(header);
+            suitesEl.appendChild(suite);
+            let pass = 0, fail = 0;
+            await new Promise(async (resolve) => {
+                globalThis.__calibrat3TestReporter = {
+                    pass(name, ms) { pass++; addRow(suite, 'pass', name, null, ms); },
+                    fail(name, err) { fail++; addRow(suite, 'fail', name, err, 0); },
+                    done() { resolve(); },
+                };
+                try {
+                    await import(`./${file}?t=${Date.now()}`);
+                } catch (e) {
+                    fail++; addRow(suite, 'fail', `(load) ${file}`, e.stack || String(e), 0);
+                    resolve();
+                }
+            });
+            header.querySelector('.count').className = 'count';
+            header.querySelector('.count').textContent = `${pass} passed${fail ? `, ${fail} failed` : ''}`;
+            header.querySelector('.count').style.color = fail ? '#ff6b6b' : '#4ade80';
+            totalPass += pass; totalFail += fail;
+            results.push({ file, pass, fail });
+        }
+        delete globalThis.__calibrat3TestReporter;
+        summaryEl.className = `summary ${totalFail ? 'has-failures' : 'all-passed'}`;
+        summaryEl.textContent = totalFail ? `${totalFail} failed, ${totalPass} passed` : `All ${totalPass} tests passed`;
+        window.__testResults = { totalPass, totalFail, results, done: true };
+
+        function addRow(suite, status, name, err, ms) {
+            const row = document.createElement('div');
+            row.className = `test ${status}`;
+            row.innerHTML = `<span class="status">${status === 'pass' ? 'ok' : 'FAIL'}</span><span class="name"></span><span class="ms">${ms ? ms.toFixed(1) + ' ms' : ''}</span>`;
+            row.querySelector('.name').textContent = name;
+            if (err) { const pre = document.createElement('pre'); pre.textContent = err; row.appendChild(pre); }
+            suite.appendChild(row);
+        }
+    </script>
+</body>
+</html>

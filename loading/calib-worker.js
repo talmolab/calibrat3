@@ -29,13 +29,29 @@ let ready = false;
 const post = (m, transfer) => postMessage(m, transfer || []);
 const log = (msg, level = 'info') => post({ type: 'log', level, msg });
 
+/**
+ * Resolve the initialized OpenCV module. Emscripten's MODULARIZE build exposes
+ * `cv.then(cb)` but that `then` RETURNS THE MODULE (a thenable) — so `await cv`
+ * or `resolve(cv)` recurses forever. Never await the module directly; hand it
+ * back wrapped in a plain object.
+ */
+function whenOpenCVReady(cvObj) {
+    return new Promise((resolve, reject) => {
+        if (!cvObj) { reject(new Error('cv global is undefined')); return; }
+        const done = (m) => resolve({ module: m });
+        if (typeof cvObj.Mat === 'function') { done(cvObj); return; }
+        if (typeof cvObj.then === 'function') {
+            cvObj.then((m) => done(m && typeof m.Mat === 'function' ? m : cvObj));
+            return;
+        }
+        const prev = cvObj.onRuntimeInitialized;
+        cvObj.onRuntimeInitialized = () => { if (typeof prev === 'function') prev(); done(cvObj); };
+    });
+}
+
 (async () => {
     try {
-        let m = cv;
-        if (m && typeof m.then === 'function') m = await m;
-        if (!(m && typeof m.Mat === 'function')) {
-            await new Promise((resolve) => { const prev = m.onRuntimeInitialized; m.onRuntimeInitialized = () => { prev && prev(); resolve(); }; });
-        }
+        const { module: m } = await whenOpenCVReady(cv);
         CV = m;
         const [store, cov, intr, extr, tri, sba, geom] = await Promise.all([
             import('../calib/detection-store.js'),
@@ -110,6 +126,12 @@ function runExtrinsics({ requestId, store: plain, intrinsics, board, refIdx, min
     const store = M.store.DetectionStore.fromPlain(plain);
     progress(0.02, 'building covisibility graph');
     const graph = M.cov.buildCovisibilityGraph(store, minCovisible, new Set(excluded || []));
+    // Cameras without intrinsics cannot anchor a relative pose: drop their edges
+    // so the BFS never routes through them (they end up "unreachable").
+    for (let v = 0; v < store.numViews; v++) {
+        if (intrinsics[v]) continue;
+        for (let u = 0; u < store.numViews; u++) { graph.pairCounts[v][u] = 0; graph.pairCounts[u][v] = 0; }
+    }
     const chain = M.cov.findPoseChain(graph, refIdx);
     const tGraph = performance.now() - t0;
     progress(0.08, 'solving relative poses');

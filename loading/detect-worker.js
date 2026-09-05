@@ -36,13 +36,29 @@ const DICT_IDS = () => ({
 
 function log(msg, level = 'info') { postMessage({ type: 'log', level, msg }); }
 
+/**
+ * Resolve the initialized OpenCV module. Emscripten's MODULARIZE build exposes
+ * `cv.then(cb)` but that `then` RETURNS THE MODULE (a thenable) — so `await cv`
+ * or `resolve(cv)` recurses forever. Never await the module directly; hand it
+ * back wrapped in a plain object.
+ */
+function whenOpenCVReady(cvObj) {
+    return new Promise((resolve, reject) => {
+        if (!cvObj) { reject(new Error('cv global is undefined')); return; }
+        const done = (m) => resolve({ module: m });
+        if (typeof cvObj.Mat === 'function') { done(cvObj); return; }
+        if (typeof cvObj.then === 'function') {
+            cvObj.then((m) => done(m && typeof m.Mat === 'function' ? m : cvObj));
+            return;
+        }
+        const prev = cvObj.onRuntimeInitialized;
+        cvObj.onRuntimeInitialized = () => { if (typeof prev === 'function') prev(); done(cvObj); };
+    });
+}
+
 (async () => {
     try {
-        let m = cv;
-        if (m && typeof m.then === 'function') m = await m;
-        if (!(m && typeof m.Mat === 'function')) {
-            await new Promise((resolve) => { const prev = m.onRuntimeInitialized; m.onRuntimeInitialized = () => { prev && prev(); resolve(); }; });
-        }
+        const { module: m } = await whenOpenCVReady(cv);
         CV = m;
         ready = true;
         postMessage({ type: 'ready' });

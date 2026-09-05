@@ -52,6 +52,7 @@ export class SwarmPlot {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, W, H);
         this.pts = [];
+        this.grid = null;   // no stale hit-testing if we bail out below
         const pad = { left: 58, right: 20, top: 26, bottom: 42 };
         const pw = W - pad.left - pad.right, ph = H - pad.top - pad.bottom;
         const all = [];

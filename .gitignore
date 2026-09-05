@@ -1,7 +1,9 @@
-node_modules/
-tests/e2e/node_modules/
-tests/e2e/.playwright/
-__pycache__/
-.DS_Store
 *.log
+.DS_Store
 /scratch/
+__pycache__/
+node_modules
+node_modules/
+tests/e2e/.playwright/
+tests/e2e/node_modules
+tests/e2e/node_modules/

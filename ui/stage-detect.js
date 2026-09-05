@@ -179,6 +179,7 @@ export async function runBatchDetection() {
     const t0 = performance.now();
     let done = 0, failed = 0, lastUi = 0;
     const perViewDone = new Array(nViews).fill(0);
+    const decodedAtStart = state.views.reduce((a, v) => a + v.decoder.stats.decoded, 0);
     const update = (force) => {
         const now = performance.now();
         if (!force && now - lastUi < 100) return;
@@ -187,7 +188,7 @@ export async function runBatchDetection() {
         const rate = done / Math.max(1e-3, el);
         const eta = rate > 0 ? (totalJobs - done) / rate : 0;
         progress.set(done / totalJobs, `${done} / ${totalJobs} · ${rate.toFixed(1)}/s · ETA ${fmtMs(eta * 1000)}`);
-        $('detectionRate').textContent = `decoded ${state.views.reduce((a, v) => a + v.decoder.stats.decoded, 0)} frames`;
+        $('detectionRate').textContent = `decoded ${state.views.reduce((a, v) => a + v.decoder.stats.decoded, 0) - decodedAtStart} frames for ${totalJobs} samples`;
     };
     const ticker = setInterval(() => update(false), 200);
 
