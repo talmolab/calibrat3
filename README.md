@@ -29,7 +29,9 @@ and pinned dependencies, web workers for anything heavy.
   and progress is one throttled bar. Thousands of frames are fine; the UI stays live.
 - **Detection results without DOM bloat:** a canvas frame strip (one column per
   sampled frame) plus a virtualized, filterable table in a fixed-height scroller.
-- **Intrinsics** per camera in a calibration worker with progress, optional
+- **Intrinsics** per camera in a calibration worker with progress, selectable
+  distortion model (k1-only by default, as anipose — it gave the best cross-view
+  consistency on an 18-camera rig; k1k2 / k1k2k3 / full available), optional
   coverage-based frame subsampling (default 50 frames/camera chosen for image
   coverage), per-frame reprojection errors for *every* valid frame, swarm plot,
   worst-frames gallery with lazy thumbnails captured during detection, and

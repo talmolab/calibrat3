@@ -100,16 +100,37 @@ no floor, kept 20 % of the data and made the 18-camera fit worse. `state.sbaResu
 records each round; the before/after table (`#reprojStatsTable`) compares initial and
 refined per-camera stats. The solver's own `outlier_threshold` is left at 0.
 
+### Intrinsic model: fewer distortion terms generalize better across cameras
+
+`Distortion model` in stage 3 maps to calibrateCamera flags (`ui/stage-intrinsics.js`
+`distortionFlags`): `k1` (FIX_K2|FIX_K3|ZERO_TANGENT, default, what anipose fits),
+`k1k2`, `k1k2k3`, `full`. Measured on the 18-camera session (same detections, initial
+extrinsics only): full 5-param model -> cross-view median 12.74 px, k1+k2 -> 12.13,
+**k1 only -> 10.27** (the anipose reference: 10.80). Per-camera RMS goes the other way
+(0.33 -> 1.41 px): the richer models fit per-camera systematic effects (motion / rolling
+shutter / board flatness) that do not transfer across views. On the 4-camera sample the
+k1 model also helps (initial 5.8 -> 5.2, after SBA 3.6 -> 2.4 px). The synthetic stress
+test selects `full` because its ground truth has k2 != 0.
+
 ### What "good" looks like on real data
 
 On the 18-camera / 1800-frame HEVC session (`/root/vast/eric/calibration_test`, transcoded
-to H.264 for headless tests), the anipose `calibration.toml` shipped with it scores a
-**10.8 px median** cross-view reprojection error on our detections, and per-frame errors
-swing 4–47 px with board motion — the data (frame sync / motion) limits consistency,
-not the solver. Our initial extrinsics score 12.7 px median with camera-pair distances
-within ~10 mm of anipose's. Judge SBA changes by "median on all observations vs the
-reference on the same detections" (`tests/e2e/real-session.mjs` prints it), not by
-absolute pixel numbers.
+to H.264 for headless tests) the anipose `calibration.toml` shipped with it scores a
+**10.8 px median** cross-view reprojection error on our detections. Things established
+experimentally there (see `tests/e2e/real-session.mjs` and the scratch probes in git
+history of this file): integer frame shifts of any camera only make it worse (cameras
+are frame-synchronized); the board never holds still (median 56 px/frame, slowest
+quartile 40 px/frame) so a motion filter cannot help on this recording; SBA with free
+3D points lowers its own cost without lowering the DLT-triangulated error, and freeing
+all 9 intrinsic parameters makes it worse — hence model selection in `runSba`. Judge
+changes by "median over all observations vs the reference on the same detections", not
+by absolute pixel numbers; the per-frame error swings 4–47 px on this data.
+
+Current result on that session (600 sampled frames, defaults: k1-only intrinsics, 2 SBA
+rounds, model selection): initial extrinsics 10.27 px median, after SBA **7.27 px median /
+22.3 px p95** vs the anipose reference's 10.80 / 48.9 on the same detections; camera-pair
+distances within 6 mm (median) of anipose's. Wall clock in headless Chromium (CPU only,
+12 detect workers): detection 600x18 in 200 s, intrinsics 123 s, extrinsics 3 s, SBA 184 s.
 
 ### Board convention
 

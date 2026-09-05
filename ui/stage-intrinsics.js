@@ -78,6 +78,16 @@ function indexOf(frames, f) {
     return -1;
 }
 
+/** Map the distortion-model selector to calibrateCamera flags. */
+export function distortionFlags(model) {
+    switch (model) {
+        case 'k1': return { fixK2: true, fixK3: true, zeroTangent: true };
+        case 'k1k2': return { fixK3: true, zeroTangent: true };
+        case 'k1k2k3': return { zeroTangent: true };
+        default: return {};
+    }
+}
+
 // ---- compute -------------------------------------------------------------------
 
 export async function computeIntrinsics() {
@@ -86,14 +96,14 @@ export async function computeIntrinsics() {
     const cw = controllers.calib;
     const minCorners = intInput('minCorners', 6);
     const maxFrames = intInput('maxCalibFrames', 50);
-    const flags = { fixK3: $('fixK3').checked, zeroTangent: $('zeroTangent').checked };
+    const flags = distortionFlags($('distModel').value);
     const nViews = state.views.length;
     setEnabled('computeIntrinsicsBtn', false);
     setEnabled('computeExtrinsicsBtn', false);
     setStageStatus('stage3', 'Computing…', 'active');
     progress.show('starting');
     const t0 = performance.now();
-    log(`Intrinsics: minCorners=${minCorners}, maxFrames/camera=${maxFrames || 'all'}, excluded=${state.exclusions.intrinsics.size}, flags=${JSON.stringify(flags)}`);
+    log(`Intrinsics: minCorners=${minCorners}, maxFrames/camera=${maxFrames || 'all'}, excluded=${state.exclusions.intrinsics.size}, distortion model=${$('distModel').value}`);
     const results = new Array(nViews).fill(null);
     let ok = 0;
     try {
@@ -124,6 +134,7 @@ export async function computeIntrinsics() {
             }
             fractions[v] = 1; report();
             if (res.error) { log(`${view.name}: ${res.error}`, 'error'); return; }
+            res.distModel = $('distModel').value;
             results[v] = res;
             ok++;
             const med = medianOf(res.perFrame.errors);

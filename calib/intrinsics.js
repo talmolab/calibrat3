@@ -40,6 +40,7 @@ export function calibrateIntrinsics(cv, samples, imageSize, board, opts = {}) {
         const size = new cv.Size(imageSize.width, imageSize.height);
         let flags = cv.CALIB_USE_INTRINSIC_GUESS;
         if (opts.fixK3) flags |= cv.CALIB_FIX_K3;
+        if (opts.fixK2) flags |= cv.CALIB_FIX_K2;
         if (opts.zeroTangent) flags |= cv.CALIB_ZERO_TANGENT_DIST;
         if (opts.fixAspect) flags |= cv.CALIB_FIX_ASPECT_RATIO;
         mats.push(K, dist, stdI, stdE, perViewErr);

@@ -75,6 +75,7 @@ try {
     step(`thumbnails captured: ${thumbs}`);
 
     const tIntr = Date.now();
+    await page.selectOption('#distModel', 'full');   // ground truth has k2 != 0
     await page.click('#computeIntrinsicsBtn');
     await waitState((n) => window.__calibrat3.state.intrinsics.filter(Boolean).length === n, info.views.length, { timeout: 1800000 });
     const intr = await page.evaluate(() => window.__calibrat3.state.intrinsics.map(r => ({ rms: r.rmsError, used: r.framesUsed, valid: r.framesValid, K: r.K, dist: r.dist, ms: r.timings.totalMs, cal: r.timings.calibrateMs, ev: r.timings.reprojectMs })));

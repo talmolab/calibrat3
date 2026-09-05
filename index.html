@@ -190,8 +190,14 @@
                         <div class="config-row">
                             <div class="config-item"><label>Min corners / frame</label><input type="number" id="minCorners" value="6" min="4" max="200"></div>
                             <div class="config-item"><label title="Frames used by calibrateCamera per camera; chosen greedily for image coverage. 0 = use all valid frames.">Max frames / camera</label><input type="number" id="maxCalibFrames" value="50" min="0" step="10"></div>
-                            <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="fixK3"><span>fix k3 = 0</span></label></div>
-                            <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="zeroTangent"><span>zero tangential</span></label></div>
+                            <div class="config-item"><label title="Radial/tangential distortion terms to fit. Fewer terms generalize better across cameras: on an 18-camera rig the k1-only model (what anipose uses) gave the lowest cross-view error even though its per-camera RMS is higher. Use richer models only for strongly distorting lenses with boards covering the whole image.">Distortion model</label>
+                                <select id="distModel">
+                                    <option value="k1" selected>k1 only (anipose-style)</option>
+                                    <option value="k1k2">k1, k2</option>
+                                    <option value="k1k2k3">k1, k2, k3</option>
+                                    <option value="full">full: k1, k2, k3, p1, p2</option>
+                                </select>
+                            </div>
                         </div>
                         <div class="config-row">
                             <button id="computeIntrinsicsBtn" disabled>Compute intrinsics</button>
