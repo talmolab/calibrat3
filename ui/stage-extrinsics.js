@@ -237,7 +237,7 @@ async function computeReprojection(onProgress) {
 export async function runSba() {
     if (!state.reproj) return;
     const refIdx = state.referenceView;
-    const policy = $('sbaRejectPolicy') ? $('sbaRejectPolicy').value : 'anipose';
+    const policy = $('sbaRejectPolicy') ? $('sbaRejectPolicy').value : 'aggressive';
     const rounds = Math.max(1, intInput('sbaOutlierRounds', 6));
     const finalThr = numInput('sbaOutlierThreshold', 1);
     const startThr = numInput('sbaOutlierStart', 0);
@@ -267,7 +267,7 @@ export async function runSba() {
         if (!preSba) preSba = { intrinsics: state.intrinsics.slice(), extrinsics: state.extrinsics.slice() };
         const s0 = state.reprojInitialSummary || state.reproj.summary;
         const finite0 = input0.meta.pointErr.filter(Number.isFinite);
-        const start = startThr > 0 ? startThr : (policy === 'anipose' ? 15 : Math.max(finalThr * 3, percentile(finite0, 0.95)));
+        const start = startThr > 0 ? startThr : (policy === 'aggressive' ? 15 : Math.max(finalThr * 3, percentile(finite0, 0.95)));
         const schedule = finalThr > 0 ? outlierSchedule(Math.max(start, finalThr), finalThr, rounds) : [Infinity];
         log(`SBA: ${input0.meta.numCameras} cameras, ${input0.meta.numPoints} points (${input0.meta.numFrames} frames${input0.meta.frameStride > 1 ? `, every ${input0.meta.frameStride}th` : ''}), ${input0.meta.numObservations} observations; ` +
             `${schedule.length} round(s), rejection policy ${policy}, point-error thresholds ${schedule.map(t => Number.isFinite(t) ? t.toFixed(1) : 'none').join(' → ')} px, ${baseConfig.robust_loss}(${baseConfig.robust_loss_param}), ref=${state.views[refIdx].name}, ` +
@@ -345,7 +345,7 @@ export async function runSba() {
  * One SBA attempt: rounds of per-point rejection + solve + re-triangulation, starting
  * from the current state. Returns refined arrays without touching state.
  */
-async function sbaAttempt(config, schedule, prep, progressBase, progressSpan, policy = 'anipose') {
+async function sbaAttempt(config, schedule, prep, progressBase, progressSpan, policy = 'aggressive') {
     const cw = controllers.calib;
     const label = `optimize ${['extrinsics', 'intrinsics', 'points'].filter((k, i) => [config.optimize_extrinsics, config.optimize_intrinsics, config.optimize_points][i]).join('+')}`;
     let intr = state.intrinsics, extr = state.extrinsics, reproj = state.reproj;
@@ -360,8 +360,8 @@ async function sbaAttempt(config, schedule, prep, progressBase, progressSpan, po
         const errs = input.meta.pointErr;
         const finite = errs.filter(Number.isFinite);
         let mu, clampNote = '';
-        if (policy === 'anipose') {
-            // aniposelib: mu = max(min(max_error, mus[i]), min_error) with per-pair p75 / p15 bounds.
+        if (policy === 'aggressive') {
+            // Same clamp as aniposelib: mu = max(min(max_error, mus[i]), min_error) with per-pair p75 / p15 bounds.
             const b = pairErrorBounds(reproj, state.views.length);
             mu = Math.max(Math.min(b.maxError, schedule[r]), b.minError);
             if (mu !== schedule[r]) clampNote = ` — schedule asked ${schedule[r].toFixed(1)}, clamped to [worst-pair p15 ${b.minError.toFixed(1)}, worst-pair p75 ${b.maxError.toFixed(1)}]`;

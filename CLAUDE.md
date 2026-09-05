@@ -100,7 +100,7 @@ no floor, kept 20 % of the data and made the 18-camera fit worse. `state.sbaResu
 records each round; the before/after table (`#reprojStatsTable`) compares initial and
 refined per-camera stats. The solver's own `outlier_threshold` is left at 0.
 
-Rejection policy (`Rejection` select): **anipose** reproduces aniposelib's
+Rejection policy (`Rejection` select): **aggressive** reproduces aniposelib's
 `bundle_adjust_iter` clamp — 6 rounds, thresholds 15 → 1 px (geometric), each round's
 threshold clamped to [max over camera pairs of the 15th percentile, max over pairs of the
 75th percentile] of per-point pair-mean errors (`calib/sba.js` `pairErrorBounds`), and an
@@ -108,10 +108,10 @@ early stop when the median point error < 0.3 px. That is more aggressive than
 **conservative** (threshold never below the global 80th percentile). anipose also fits on
 random subsamples of 200 points per round with a linear loss; we fit on up to the point cap
 with the chosen robust loss and re-triangulate all points every round. On the 18-camera
-session the two policies land close together: anipose 6.99 px median / 9.34 mean / 25.0 p95
+session the two policies land close together: aggressive 6.99 px median / 9.34 mean / 25.0 p95
 (the clamp held its threshold at ~10.5 px, fitting ~69 % of points), conservative 7.27 /
-9.06 / 22.3; on the sample session 2.57 vs 2.43 px. anipose is the default because it is
-what users compare against.
+9.06 / 22.3; on the sample session 2.57 vs 2.43 px. aggressive is the default because it is
+the scheme users compare against.
 
 Verbosity: the WASM solver is one blocking call, so `calib-worker.js` runs it in chunks
 of `Report every` iterations (default 10), feeding refined cameras/points back in; each
@@ -121,8 +121,8 @@ damping are harmless (they even escape plateaus); a chunk that ends with a highe
 rejected and the previous state kept. Per round the log lists per camera: translation /
 rotation change, observations rejected, median/p95 before → after, intrinsic changes.
 The UI keeps the initial reprojection plots in the extrinsics section and adds a
-"Refined cross-view reprojection" section under the SBA panel (strip, swarm, anipose-style
-log-binned histogram initial vs refined, per-camera table, Worst/Best frame galleries).
+"Refined cross-view reprojection" section under the SBA panel (strip, swarm, error
+histogram (linear bins, overflow bin past the 99th percentile) initial vs refined, per-camera table, Worst/Best frame galleries).
 `state.reprojInitial` holds the full initial result for those plots.
 
 ### Intrinsic model: fewer distortion terms generalize better across cameras
