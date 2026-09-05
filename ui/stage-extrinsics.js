@@ -8,7 +8,7 @@ import { state, controllers, cameraColor } from './app-state.js';
 import { log, fmtMs } from './log-panel.js';
 import { $, el, intInput, numInput, setStageStatus, expandStage, setEnabled, showError, Progress, errorColor } from './stages.js';
 import { FrameStrip, errorColormap } from './frame-strip.js';
-import { SwarmPlot, ErrorHistogram, drawLineChart } from './plots.js';
+import { SwarmPlot, ErrorHistogram, histogramAxisMax, drawLineChart } from './plots.js';
 import { FrameGallery } from './gallery.js';
 import { indexReprojectionByFrame } from '../calib/triangulation.js';
 import { prepareSbaInput, applySbaResults, sbaReferenceIndex, filterSbaInput, outlierSchedule, pairErrorBounds } from '../calib/sba.js';
@@ -86,7 +86,7 @@ function concatAll(arrs) {
 }
 
 /** Render strip/plot/histogram/gallery of a section from a reprojection result. */
-function renderSection(sec, rp, { histSeries = null, histNote = '', thresholds = [] } = {}) {
+function renderSection(sec, rp, { histSeries = null, histNote = '', thresholds = [], xMax = null } = {}) {
     sec.reproj = rp;
     sec.byFrame = indexReprojectionByFrame(rp);
     sec.rootEl.style.display = '';
@@ -98,8 +98,12 @@ function renderSection(sec, rp, { histSeries = null, histNote = '', thresholds =
         label: v.name, color: cameraColor(i),
         points: rp.frames.filter(r => r.views[i] && isFinite(r.views[i].mean)).map(r => ({ y: r.views[i].mean, frame: r.frame, excluded: state.exclusions.extrinsics.has(r.frame), meta: { count: r.views[i].count, max: r.views[i].max } })),
     })), { thresholds: [1], note: `mean ${s.overall.mean.toFixed(2)} · median ${s.overall.median.toFixed(2)} · n=${s.observations}` });
-    if (histSeries) sec.hist.setData(histSeries, { thresholds, note: histNote });
-    else sec.hist.setData(perCameraErrors(rp).map((a, i) => ({ label: state.views[i].name, color: cameraColor(i), values: a })), { note: histNote });
+    // Both histograms (initial per-camera, refined initial-vs-refined) share one x axis,
+    // set from the INITIAL error distribution so the improvement is visible at a glance.
+    const perCam = perCameraErrors(rp);
+    if (!xMax) { xMax = histogramAxisMax(concatAll(perCam)); state.histXMax = xMax; }
+    if (histSeries) sec.hist.setData(histSeries, { thresholds, note: histNote, xMax });
+    else sec.hist.setData(perCam.map((a, i) => ({ label: state.views[i].name, color: cameraColor(i), values: a })), { note: histNote, xMax });
     const items = rp.frames.map(r => ({
         frame: r.frame, value: r.meanErr, excluded: state.exclusions.extrinsics.has(r.frame),
         sub: state.views.map((v, i) => r.views[i] ? { name: v.name, m: r.views[i].mean } : null).filter(x => x && Number.isFinite(x.m)).sort((a, b) => b.m - a.m).slice(0, 3).map(x => `${x.name}:${x.m.toFixed(2)}`).join(' '),
@@ -188,6 +192,7 @@ export async function computeExtrinsics() {
         state.reprojInitialSummary = state.reproj.summary;   // kept for the before/after table
         state.reprojInitial = state.reproj;                   // kept for the initial plots
         $('refinedResults').style.display = 'none';
+        state.histXMax = null;
         renderSection(initialSec, state.reproj);
         renderStatsTable();
         progress.hide();
@@ -434,6 +439,7 @@ export async function revertSba() {
     try {
         await computeReprojection((f, msg) => progress.set(f, msg));
         state.reprojInitial = state.reproj;
+        state.histXMax = null;
         renderSection(initialSec, state.reproj);
         progress.hide();
         renderPoseTables();
@@ -524,7 +530,7 @@ function renderRefined(finalThreshold) {
     if (initialAll) series.push({ label: 'initial extrinsics', color: '#9a9a9a', values: initialAll, fill: true, width: 1.2 });
     series.push({ label: 'after bundle adjustment', color: '#60a5fa', values: refinedAll, fill: true, width: 2 });
     const thresholds = Number.isFinite(finalThreshold) ? [{ x: finalThreshold, label: `fit threshold ${finalThreshold.toFixed(1)} px` }] : [];
-    renderSection(refinedSec, rp, { histSeries: series, thresholds, histNote: 'all observations' });
+    renderSection(refinedSec, rp, { histSeries: series, thresholds, histNote: 'all observations', xMax: state.histXMax || null });
 }
 
 function currentSection() { return state.sbaResult ? refinedSec : initialSec; }
