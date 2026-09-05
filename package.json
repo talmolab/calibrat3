@@ -1,0 +1,10 @@
+{
+  "name": "calibrat3",
+  "private": true,
+  "type": "module",
+  "description": "Browser-based multi-camera ChArUco calibration (no build step). package.json exists only so Node treats the ESM sources as modules for tests.",
+  "scripts": {
+    "test": "node tests/run-mjs-tests.mjs",
+    "serve": "python3 server.py"
+  }
+}

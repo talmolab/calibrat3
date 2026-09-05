@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>calibrat3 — Multi-Camera Calibration</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- mp4box.js (vendored, classic script: defines MP4Box + DataStream) -->
+    <script src="lib/mp4box/mp4box.all.min.js"></script>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <h1>calibrat3</h1>
+            <span class="tagline">multi-camera ChArUco calibration in the browser</span>
+        </div>
+        <div class="topbar-right">
+            <span id="sessionLabel" class="session-label">no session</span>
+            <span id="workerStatus" class="worker-status" title="Detection / calibration workers">workers: starting…</span>
+            <a class="topbar-link" href="https://github.com/talmolab/calibrat3" target="_blank" rel="noopener">GitHub</a>
+        </div>
+    </header>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <div class="main-layout no-videos" id="mainLayout">
+        <!-- ============================ VIDEO PANEL ============================ -->
+        <div class="video-panel hidden" id="videoPanel">
+            <div class="video-grid" id="videoGrid"></div>
+
+            <div class="seekbar-container" id="seekbarContainer">
+                <div class="seekbar" id="seekbar">
+                    <div class="seekbar-progress" id="seekbarProgress"></div>
+                    <div class="seekbar-thumb" id="seekbarThumb"></div>
+                </div>
+                <div class="frame-info">
+                    <span>Frame <span id="currentFrame">0</span> / <span id="totalFrames">0</span></span>
+                    <span id="frameBadges" class="frame-badges"></span>
+                    <span>t = <span id="currentTime">0:00.000</span></span>
+                </div>
+            </div>
+
+            <div class="controls compact" id="videoControls">
+                <button id="playBtn" class="secondary">▶ Play</button>
+                <button id="prev10Btn" class="secondary" title="−10 frames (↓)">◀◀</button>
+                <button id="prevFrameBtn" class="secondary" title="−1 frame (←)">◀</button>
+                <button id="nextFrameBtn" class="secondary" title="+1 frame (→)">▶</button>
+                <button id="next10Btn" class="secondary" title="+10 frames (↑)">▶▶</button>
+                <span class="spacer"></span>
+                <button id="prevSampledBtn" class="secondary" title="Previous sampled frame ([)">◁ sampled</button>
+                <button id="nextSampledBtn" class="secondary" title="Next sampled frame (])">sampled ▷</button>
+                <button id="excludeCurrentBtn" class="secondary" title="Toggle exclusion of current frame (X)">✕ exclude</button>
+            </div>
+
+            <div class="overlay-controls" id="overlayControls">
+                <span class="overlay-title">Overlays</span>
+                <label class="overlay-checkbox"><input type="checkbox" id="ovDetections" checked><span>Detections</span></label>
+                <label class="overlay-checkbox"><input type="checkbox" id="ovIds"><span>Corner ids</span></label>
+                <label class="overlay-checkbox"><input type="checkbox" id="ovIntrinsics" checked><span>Intrinsic reproj</span></label>
+                <label class="overlay-checkbox"><input type="checkbox" id="ovExtrinsics" checked><span>Triangulated reproj</span></label>
+            </div>
+
+            <details class="hotkeys">
+                <summary>Keyboard shortcuts</summary>
+                <div class="hotkeys-grid">
+                    <div class="hotkey"><span class="hotkey-key">← / →</span><span class="hotkey-desc">±1 frame</span></div>
+                    <div class="hotkey"><span class="hotkey-key">↑ / ↓</span><span class="hotkey-desc">±10 frames</span></div>
+                    <div class="hotkey"><span class="hotkey-key">Space</span><span class="hotkey-desc">Play / pause</span></div>
+                    <div class="hotkey"><span class="hotkey-key">Home / End</span><span class="hotkey-desc">First / last frame</span></div>
+                    <div class="hotkey"><span class="hotkey-key">[ / ]</span><span class="hotkey-desc">Prev / next sampled frame</span></div>
+                    <div class="hotkey"><span class="hotkey-key">{ / }</span><span class="hotkey-desc">Prev / next worst frame</span></div>
+                    <div class="hotkey"><span class="hotkey-key">X</span><span class="hotkey-desc">Toggle exclusion (active stage)</span></div>
+                    <div class="hotkey"><span class="hotkey-key">D</span><span class="hotkey-desc">Detect current frame</span></div>
+                    <div class="hotkey"><span class="hotkey-key">+ / − / 0</span><span class="hotkey-desc">Zoom all / reset</span></div>
+                    <div class="hotkey"><span class="hotkey-key">Wheel / drag</span><span class="hotkey-desc">Zoom / pan a view</span></div>
+                </div>
+            </details>
+        </div>
+
+        <div class="resize-handle" id="resizeHandle"><div class="resize-handle-dots"><span></span><span></span><span></span></div></div>
+
+        <!-- ============================ PIPELINE PANEL ============================ -->
+        <div class="pipeline-panel" id="pipelinePanel">
+
+            <!-- STAGE 1: Load -->
+            <section class="stage" id="stage1">
+                <div class="stage-header">
+                    <div class="stage-title"><span class="stage-number">1</span><h2>Load videos</h2></div>
+                    <div class="stage-right"><span class="stage-status" id="stage1Status">Not started</span><span class="stage-expand">▼</span></div>
+                </div>
+                <div class="stage-content">
+                    <div class="config-panel">
+                        <div class="config-row">
+                            <button id="loadSampleBtn">Load sample session</button>
+                            <button id="loadFolderBtn" class="secondary">Open session folder…</button>
+                            <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none">
+                            <button id="loadSessionBtn" class="secondary" title="Restore a saved calibrat3 session (.json) — videos are re-opened from the same folder">Load saved session…</button>
+                            <input type="file" id="sessionInput" accept=".json,application/json" style="display:none">
+                        </div>
+                        <p class="hint">
+                            Folder layouts: <code>{root}/{view}.mp4</code> (flat) or
+                            <code>{root}/{view}/calibration_images/*.mp4</code> (anipose-style, also <code>calibration/</code>).
+                            A <code>board.toml</code> next to the videos fills in the board form.
+                        </p>
+                    </div>
+                    <div class="view-list" id="viewList"><p class="muted">No videos loaded.</p></div>
+                </div>
+            </section>
+
+            <!-- STAGE 2: Detect -->
+            <section class="stage collapsed" id="stage2">
+                <div class="stage-header">
+                    <div class="stage-title"><span class="stage-number">2</span><h2>Detect ChArUco corners</h2></div>
+                    <div class="stage-right"><span class="stage-status" id="stage2Status">Waiting for videos</span><span class="stage-expand">▼</span></div>
+                </div>
+                <div class="stage-content">
+                    <div class="config-panel">
+                        <h3>Board <span id="boardSource" class="muted small"></span></h3>
+                        <div class="config-row">
+                            <div class="config-item"><label>Squares X</label><input type="number" id="boardX" value="8" min="3" max="40"></div>
+                            <div class="config-item"><label>Squares Y</label><input type="number" id="boardY" value="11" min="3" max="40"></div>
+                            <div class="config-item"><label>Square (mm)</label><input type="number" id="squareLength" value="24" step="0.01" min="0.01"></div>
+                            <div class="config-item"><label>Marker (mm)</label><input type="number" id="markerLength" value="18.75" step="0.01" min="0.01"></div>
+                            <div class="config-item"><label>Dictionary</label>
+                                <select id="arucoDict">
+                                    <option value="DICT_4X4_50">4x4 (50)</option><option value="DICT_4X4_100">4x4 (100)</option>
+                                    <option value="DICT_4X4_250">4x4 (250)</option><option value="DICT_4X4_1000" selected>4x4 (1000)</option>
+                                    <option value="DICT_5X5_50">5x5 (50)</option><option value="DICT_5X5_100">5x5 (100)</option>
+                                    <option value="DICT_5X5_250">5x5 (250)</option><option value="DICT_5X5_1000">5x5 (1000)</option>
+                                    <option value="DICT_6X6_50">6x6 (50)</option><option value="DICT_6X6_100">6x6 (100)</option>
+                                    <option value="DICT_6X6_250">6x6 (250)</option><option value="DICT_6X6_1000">6x6 (1000)</option>
+                                </select>
+                            </div>
+                            <div class="config-item"><span id="boardInfo" class="muted small"></span></div>
+                        </div>
+                        <div class="config-row">
+                            <button id="detectCurrentBtn" class="secondary" disabled>Detect current frame (D)</button>
+                            <span id="detectCurrentResult" class="muted small"></span>
+                        </div>
+                    </div>
+
+                    <div class="config-panel">
+                        <h3>Batch detection</h3>
+                        <div class="config-row">
+                            <div class="config-item"><label>Target samples</label><input type="number" id="targetSamples" value="100" min="1" step="10"></div>
+                            <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="allFramesCheck"><span>every frame</span></label></div>
+                            <div class="config-item"><label>Stride</label><span id="computedStride" class="mono">–</span></div>
+                            <div class="config-item"><label>Frames to process</label><span id="framesToProcess" class="mono">–</span></div>
+                            <div class="config-item"><label>Workers</label><span id="poolInfo" class="mono">–</span></div>
+                        </div>
+                        <div class="config-row">
+                            <button id="runDetectionBtn" disabled>Run batch detection</button>
+                            <button id="cancelDetectionBtn" class="secondary" style="display:none">Cancel</button>
+                            <div id="detectionProgress" class="progress-container"><div class="progress-bar"></div><div class="progress-text">0%</div></div>
+                            <span id="detectionRate" class="muted small mono"></span>
+                        </div>
+                    </div>
+
+                    <div id="detectionResults" style="display:none">
+                        <h3>Detections <span id="detectionSummary" class="muted small"></span></h3>
+                        <p class="hint">Strip: one column per sampled frame, colored by the number of corners common to all views. Click to seek.</p>
+                        <div class="strip-wrap"><canvas id="detectionStrip"></canvas><div class="tooltip" id="detectionStripTooltip"></div></div>
+                        <div class="strip-legend" id="detectionStripLegend"></div>
+                        <div class="table-toolbar">
+                            <label>Min common <input type="number" id="tableMinCommon" value="0" min="0" style="width:60px"></label>
+                            <label>Show
+                                <select id="tableFilter">
+                                    <option value="all">all sampled frames</option>
+                                    <option value="any">frames with any detection</option>
+                                    <option value="allviews">frames detected in all views</option>
+                                    <option value="failed">frames failing in ≥1 view</option>
+                                </select>
+                            </label>
+                            <span id="tableCount" class="muted small"></span>
+                        </div>
+                        <div id="detectionTable"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- STAGE 3: Intrinsics -->
+            <section class="stage collapsed" id="stage3">
+                <div class="stage-header">
+                    <div class="stage-title"><span class="stage-number">3</span><h2>Intrinsics</h2></div>
+                    <div class="stage-right"><span class="stage-status" id="stage3Status">Waiting for detections</span><span class="stage-expand">▼</span></div>
+                </div>
+                <div class="stage-content">
+                    <div class="config-panel">
+                        <div class="config-row">
+                            <div class="config-item"><label>Min corners / frame</label><input type="number" id="minCorners" value="6" min="4" max="200"></div>
+                            <div class="config-item"><label title="Frames used by calibrateCamera per camera; chosen greedily for image coverage. 0 = use all valid frames.">Max frames / camera</label><input type="number" id="maxCalibFrames" value="80" min="0" step="10"></div>
+                            <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="fixK3"><span>fix k3 = 0</span></label></div>
+                            <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="zeroTangent"><span>zero tangential</span></label></div>
+                        </div>
+                        <div class="config-row">
+                            <button id="computeIntrinsicsBtn" disabled>Compute intrinsics</button>
+                            <div id="intrinsicsProgress" class="progress-container"><div class="progress-bar"></div><div class="progress-text">0%</div></div>
+                            <span id="intrinsicsExclusionInfo" class="muted small"></span>
+                            <button id="clearIntrinsicsExclusionsBtn" class="secondary small" style="display:none">Clear exclusions</button>
+                        </div>
+                    </div>
+
+                    <div id="intrinsicsResults" style="display:none">
+                        <table class="data-table" id="intrinsicsTable">
+                            <thead><tr><th>Camera</th><th>fx</th><th>fy</th><th>cx</th><th>cy</th><th>k1</th><th>k2</th><th>p1</th><th>p2</th><th>k3</th><th>frames</th><th>coverage</th><th>RMS (px)</th><th>median (px)</th></tr></thead>
+                            <tbody id="intrinsicsTableBody"></tbody>
+                        </table>
+                        <p class="hint">Per-frame reprojection RMS after solvePnP with the calibrated intrinsics. Strip: max over cameras. Filled dots were used in calibrateCamera; hollow were evaluated only. Click a dot or column to seek; press X to exclude the current frame, then recompute.</p>
+                        <div class="strip-wrap"><canvas id="intrinsicsStrip"></canvas><div class="tooltip" id="intrinsicsStripTooltip"></div></div>
+                        <div class="plot-wrap"><canvas id="intrinsicsPlot"></canvas><div class="tooltip" id="intrinsicsPlotTooltip"></div></div>
+                        <h3>Worst frames <span class="muted small">(click to seek, ✕ to exclude)</span></h3>
+                        <div id="intrinsicsGallery"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- STAGE 4: Extrinsics -->
+            <section class="stage collapsed" id="stage4">
+                <div class="stage-header">
+                    <div class="stage-title"><span class="stage-number">4</span><h2>Extrinsics &amp; bundle adjustment</h2></div>
+                    <div class="stage-right"><span class="stage-status" id="stage4Status">Waiting for intrinsics</span><span class="stage-expand">▼</span></div>
+                </div>
+                <div class="stage-content">
+                    <div class="config-panel">
+                        <div class="config-row">
+                            <div class="config-item"><label>Reference camera</label><select id="referenceCamera"></select></div>
+                            <div class="config-item"><label>Min covisible corners</label><input type="number" id="minCovisible" value="10" min="4" max="200"></div>
+                            <div class="config-item"><label title="Per camera pair, subsample covisible frames for the initial relative pose (0 = all)">Max frames / pair</label><input type="number" id="maxPairFrames" value="300" min="0" step="50"></div>
+                        </div>
+                        <div class="config-row">
+                            <button id="computeExtrinsicsBtn" disabled>Compute extrinsics</button>
+                            <div id="extrinsicsProgress" class="progress-container"><div class="progress-bar"></div><div class="progress-text">0%</div></div>
+                            <span id="extrinsicsExclusionInfo" class="muted small"></span>
+                            <button id="clearExtrinsicsExclusionsBtn" class="secondary small" style="display:none">Clear exclusions</button>
+                        </div>
+                    </div>
+
+                    <div id="extrinsicsResults" style="display:none">
+                        <div class="two-col">
+                            <div>
+                                <h3>Covisibility (frames per pair)</h3>
+                                <div id="covisTable"></div>
+                                <p id="chainInfo" class="muted small"></p>
+                            </div>
+                            <div>
+                                <h3>Camera poses <span class="muted small">(world = reference camera)</span></h3>
+                                <table class="data-table" id="extrinsicsTable">
+                                    <thead><tr><th>Camera</th><th>rx</th><th>ry</th><th>rz</th><th>tx</th><th>ty</th><th>tz</th><th>via</th><th>pair σt</th></tr></thead>
+                                    <tbody id="extrinsicsTableBody"></tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <h3>Cross-view reprojection <span id="reprojSummary" class="muted small"></span></h3>
+                        <p class="hint">Corners seen by ≥2 cameras are triangulated and reprojected. One dot per frame per camera (mean over that frame's corners). Strip: mean over cameras.</p>
+                        <div class="strip-wrap"><canvas id="extrinsicsStrip"></canvas><div class="tooltip" id="extrinsicsStripTooltip"></div></div>
+                        <div class="plot-wrap"><canvas id="extrinsicsPlot"></canvas><div class="tooltip" id="extrinsicsPlotTooltip"></div></div>
+                        <h3>Worst frames <span class="muted small">(click to seek, ✕ to exclude from extrinsics / SBA)</span></h3>
+                        <div id="extrinsicsGallery"></div>
+                    </div>
+
+                    <div class="config-panel" id="sbaPanel" style="display:none">
+                        <h3>Bundle adjustment <span class="muted small">(sba-solver-wasm)</span></h3>
+                        <div class="config-row">
+                            <div class="config-item"><label>Max iterations</label><input type="number" id="sbaMaxIterations" value="100" min="1" max="2000"></div>
+                            <div class="config-item"><label>Robust loss</label><select id="sbaRobustLoss"><option value="huber" selected>Huber</option><option value="cauchy">Cauchy</option><option value="none">None</option></select></div>
+                            <div class="config-item"><label>Loss param</label><input type="number" id="sbaLossParam" value="1.0" min="0.01" step="0.1"></div>
+                            <div class="config-item"><label>Outlier threshold (px, 0=off)</label><input type="number" id="sbaOutlierThreshold" value="30" min="0" step="1"></div>
+                            <div class="config-item"><label title="Cap on 3D points sent to the solver (frames are subsampled evenly). 0 = all.">Max points</label><input type="number" id="sbaMaxPoints" value="60000" min="0" step="5000"></div>
+                        </div>
+                        <div class="config-row">
+                            <div class="config-item"><label>Optimize</label>
+                                <label class="overlay-checkbox"><input type="checkbox" id="sbaOptExtrinsics" checked><span>extrinsics</span></label>
+                                <label class="overlay-checkbox"><input type="checkbox" id="sbaOptIntrinsics" checked><span>intrinsics</span></label>
+                                <label class="overlay-checkbox"><input type="checkbox" id="sbaOptPoints" checked><span>3D points</span></label>
+                            </div>
+                            <div class="config-item"><label>Tolerances</label>
+                                cost <input type="number" id="sbaCostTol" value="1e-6" step="any" style="width:80px">
+                                param <input type="number" id="sbaParamTol" value="1e-8" step="any" style="width:80px">
+                                grad <input type="number" id="sbaGradTol" value="1e-10" step="any" style="width:80px">
+                            </div>
+                        </div>
+                        <div class="config-row">
+                            <button id="runSbaBtn" disabled>Refine (bundle adjustment)</button>
+                            <button id="revertSbaBtn" class="secondary" style="display:none">Revert to initial</button>
+                            <div id="sbaProgress" class="progress-container"><div class="progress-bar"></div><div class="progress-text">0%</div></div>
+                        </div>
+                        <div id="sbaResult" class="sba-result" style="display:none">
+                            <div id="sbaSummary" class="mono small"></div>
+                            <canvas id="sbaChart" class="sba-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- STAGE 5: Export -->
+            <section class="stage collapsed" id="stage5">
+                <div class="stage-header">
+                    <div class="stage-title"><span class="stage-number">5</span><h2>Export</h2></div>
+                    <div class="stage-right"><span class="stage-status" id="stage5Status">Waiting for calibration</span><span class="stage-expand">▼</span></div>
+                </div>
+                <div class="stage-content">
+                    <div class="config-row">
+                        <button id="exportTomlBtn" disabled>Download calibration.toml</button>
+                        <button id="exportSbaJsonBtn" class="secondary" disabled>Download calibration_data.json</button>
+                        <button id="saveSessionBtn" class="secondary" disabled title="Board, sampled frames, detections, exclusions and results — reload without re-detecting">Save session (.json)</button>
+                        <button id="exportBoardBtn" class="secondary">Download board.toml</button>
+                    </div>
+                    <h3>calibration.toml <span class="muted small">(sleap-anipose format)</span></h3>
+                    <pre id="tomlPreview" class="toml-preview muted"># Complete intrinsics and extrinsics to generate the TOML</pre>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Diagnostic log -->
+    <section class="diagnostic-console" id="diagnosticConsole">
+        <div class="diagnostic-header">
+            <h3>Diagnostic log <span id="logCount" class="muted small"></span></h3>
+            <div class="diagnostic-actions">
+                <label class="overlay-checkbox"><input type="checkbox" id="logVerbose"><span>verbose</span></label>
+                <button id="copyLogBtn" class="small secondary">Copy</button>
+                <button id="clearLogBtn" class="small secondary">Clear</button>
+                <button id="toggleLogBtn" class="small secondary">Hide</button>
+            </div>
+        </div>
+        <div class="diagnostic-body" id="logBody"></div>
+    </section>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
