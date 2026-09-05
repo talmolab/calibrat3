@@ -1,0 +1,29 @@
+OpenCV.js — OpenCV compiled to WebAssembly (single-file build, WASM embedded as base64).
+
+Version:  4.13.0
+Source:   https://docs.opencv.org/4.13.0/opencv.js
+          (the vibe used https://docs.opencv.org/4.x/opencv.js, which is a
+          301 redirect to whatever the current 4.x release is — a moving target.)
+Fetched:  2026-09-05
+License:  Apache-2.0 (https://github.com/opencv/opencv/blob/4.x/LICENSE)
+Size:     ~10.9 MB
+
+Why here: calibrat3 needs the 4.7+ object-oriented aruco API
+          (cv.aruco_ArucoDetector / aruco_CharucoDetector / aruco_CharucoBoard /
+          aruco_DetectorParameters / aruco_RefineParameters / aruco_CharucoParameters),
+          cv.calibrateCameraExtended, cv.solvePnP, cv.projectPoints, cv.Rodrigues.
+          The aruco API changed across 4.x (4.5 had cv.aruco.detectMarkers), so
+          the build is pinned and vendored rather than loaded from the redirecting URL.
+
+Loading:  Classic script (main thread) or importScripts() (worker). The UMD
+          wrapper returns either a ready module or a Promise of one depending on
+          the Emscripten MODULARIZE setting; see loading/opencv-ready.js for the
+          helper that handles both.
+
+Re-fetch: curl -L -o lib/opencv/opencv.js https://docs.opencv.org/<ver>/opencv.js
+          then update the version above and re-run the browser tests
+          (tests/test-runner.html) — verify aruco_CharucoDetector still exists.
+
+Future:   A custom build with only core+imgproc+calib3d+objdetect would cut the
+          size substantially (see opencv/platforms/js/build_js.py --build_wasm
+          with a trimmed modules list).

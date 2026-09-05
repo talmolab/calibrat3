@@ -1,0 +1,17 @@
+mp4box.js — ISOBMFF (MP4) parser/demuxer in JavaScript.
+
+Version:  0.5.2  (npm dist/mp4box.all.min.js, unmodified)
+Source:   https://www.npmjs.com/package/mp4box  /  https://github.com/gpac/mp4box.js
+Fetched:  2026-09-05
+License:  BSD-3-Clause (LICENSE alongside)
+
+Why here: loading/video.js demuxes MP4 samples (offsets, sizes, cts, sync
+          flags, avcC/hvcC description) and feeds them to WebCodecs
+          VideoDecoder. Loaded as a classic <script> (defines global MP4Box and
+          DataStream), and via importScripts() in workers. Same lineage as
+          luc3d's loading/video.js; luc3d has since moved its default decode
+          backend to mediabunny (via sleap-io.js) for B-frame PTS correctness —
+          calibrat3 instead sorts samples by cts (presentation order) and
+          decodes whole GOPs, which handles B-frames for our batch use case.
+
+Re-fetch: npm pack mp4box@<ver>; copy dist/mp4box.all.min.js.
