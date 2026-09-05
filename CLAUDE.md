@@ -100,6 +100,18 @@ no floor, kept 20 % of the data and made the 18-camera fit worse. `state.sbaResu
 records each round; the before/after table (`#reprojStatsTable`) compares initial and
 refined per-camera stats. The solver's own `outlier_threshold` is left at 0.
 
+Verbosity: the WASM solver is one blocking call, so `calib-worker.js` runs it in chunks
+of `Report every` iterations (default 10), feeding refined cameras/points back in; each
+chunk posts `{iteration, cost, rms, costHistory}` for the progress bar, a live cost chart
+and a debug-level log line (turn on the log's *verbose* toggle). Chunk restarts of the LM
+damping are harmless (they even escape plateaus); a chunk that ends with a higher cost is
+rejected and the previous state kept. Per round the log lists per camera: translation /
+rotation change, observations rejected, median/p95 before → after, intrinsic changes.
+The UI keeps the initial reprojection plots in the extrinsics section and adds a
+"Refined cross-view reprojection" section under the SBA panel (strip, swarm, anipose-style
+log-binned histogram initial vs refined, per-camera table, Worst/Best frame galleries).
+`state.reprojInitial` holds the full initial result for those plots.
+
 ### Intrinsic model: fewer distortion terms generalize better across cameras
 
 `Distortion model` in stage 3 maps to calibrateCamera flags (`ui/stage-intrinsics.js`

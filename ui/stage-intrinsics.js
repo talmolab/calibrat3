@@ -12,7 +12,7 @@ import { SwarmPlot } from './plots.js';
 import { FrameGallery } from './gallery.js';
 import { emit, on } from './events.js';
 
-let strip = null, plot = null, gallery = null, progress = null;
+let strip = null, plot = null, gallery = null, galleryBest = null, progress = null;
 let worstOrder = [];   // frames sorted by max error desc (for { } navigation)
 
 export function setupIntrinsicsStage() {
@@ -34,15 +34,12 @@ export function setupIntrinsicsStage() {
         formatTooltip: (p) => `${p.group}  frame ${p.frame}\n${p.y.toFixed(3)} px${p.unused ? '  (not used in fit)' : ''}${p.excluded ? '  EXCLUDED' : ''}\nclick to seek`,
         onClick: (p) => { setActive(); controllers.video.seekToFrame(p.frame); },
     });
-    gallery = new FrameGallery($('intrinsicsGallery'), {
-        getThumb: (f) => state.thumbnails.get(f) || null,
-        onSeek: (f) => { setActive(); controllers.video.seekToFrame(f); },
-        onToggleExclude: (f) => toggleIntrinsicsExclusion(f),
-        limit: 40,
-    });
+    const galleryOpts = { getThumb: (f) => state.thumbnails.get(f) || null, onSeek: (f) => { setActive(); controllers.video.seekToFrame(f); }, onToggleExclude: (f) => toggleIntrinsicsExclusion(f), limit: 30 };
+    gallery = new FrameGallery($('intrinsicsGallery'), galleryOpts);
+    galleryBest = new FrameGallery($('intrinsicsGalleryBest'), galleryOpts);
     $('stage3').addEventListener('mousedown', () => { if (state.intrinsics.some(Boolean)) setActive(); });
 
-    on('frame', ({ frame }) => { strip.setCurrent(frame); gallery.setCurrent(frame); });
+    on('frame', ({ frame }) => { strip.setCurrent(frame); gallery.setCurrent(frame); galleryBest.setCurrent(frame); });
     on('exclusions-changed', ({ kind }) => { if (kind === 'intrinsics') refreshExclusionViews(); });
     on('detections-changed', () => { $('intrinsicsResults').style.display = 'none'; setStageStatus('stage3', 'Ready'); });
     on('session-loaded', () => { $('intrinsicsResults').style.display = 'none'; setStageStatus('stage3', 'Waiting for detections'); setEnabled('computeIntrinsicsBtn', false); });
@@ -224,8 +221,11 @@ export function renderResults() {
     }), { thresholds: [1], note: 'white bar = median · hollow = evaluated only' });
 
     worstOrder = frames.slice().sort((a, b) => frameMax.get(b) - frameMax.get(a));
-    gallery.setItems(frames.map(f => ({ frame: f, value: frameMax.get(f), excluded: state.exclusions.intrinsics.has(f), used: used.has(f), sub: perCameraShort(f) })));
+    const items = frames.map(f => ({ frame: f, value: frameMax.get(f), excluded: state.exclusions.intrinsics.has(f), used: used.has(f), sub: perCameraShort(f) }));
+    gallery.setItems(items, { sort: 'desc' });
+    galleryBest.setItems(items.filter(i => !i.excluded), { sort: 'asc' });
     gallery.setCurrent(state.currentFrame);
+    galleryBest.setCurrent(state.currentFrame);
     strip.setCurrent(state.currentFrame);
     refreshExclusionInfo();
 }
@@ -233,6 +233,7 @@ export function renderResults() {
 function refreshExclusionViews() {
     strip.setExcluded(state.exclusions.intrinsics);
     gallery.updateExclusions(state.exclusions.intrinsics);
+    galleryBest.updateExclusions(state.exclusions.intrinsics);
     if (state.intrinsics.some(Boolean)) {
         plot.setData(plot.groups.map(g => ({ ...g, points: g.points.map(p => ({ ...p, excluded: state.exclusions.intrinsics.has(p.frame) })) })), { thresholds: [1], note: plot.note });
     }

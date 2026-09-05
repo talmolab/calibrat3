@@ -87,7 +87,7 @@ try {
     await page.waitForSelector('#runSbaBtn:not([disabled])', { timeout: 300000 });
     const s5 = await state();
     step(`sba: ${JSON.stringify(s5.sba)}  reproj after: ${JSON.stringify(s5.reproj)}`);
-    if (!(s5.sba.final <= s5.sba.initial)) throw new Error('SBA did not reduce cost');
+    if (!(s5.sba.final <= s5.sba.initial)) { const cc = await page.evaluate(() => JSON.stringify(window.__calibrat3.state.sbaResult.result.chunkCosts)); throw new Error(`SBA did not reduce cost: chunks ${cc}`); }
 
     const toml = await page.textContent('#tomlPreview');
     if (!toml.includes('[cam_3]') || !toml.includes('rotation = [')) throw new Error('TOML preview incomplete');
