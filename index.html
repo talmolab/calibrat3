@@ -188,7 +188,7 @@
                     <div class="config-panel">
                         <div class="config-row">
                             <div class="config-item"><label>Min corners / frame</label><input type="number" id="minCorners" value="6" min="4" max="200"></div>
-                            <div class="config-item"><label title="Frames used by calibrateCamera per camera; chosen greedily for image coverage. 0 = use all valid frames.">Max frames / camera</label><input type="number" id="maxCalibFrames" value="80" min="0" step="10"></div>
+                            <div class="config-item"><label title="Frames used by calibrateCamera per camera; chosen greedily for image coverage. 0 = use all valid frames.">Max frames / camera</label><input type="number" id="maxCalibFrames" value="50" min="0" step="10"></div>
                             <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="fixK3"><span>fix k3 = 0</span></label></div>
                             <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="zeroTangent"><span>zero tangential</span></label></div>
                         </div>
@@ -265,7 +265,7 @@
                             <div class="config-item"><label>Robust loss</label><select id="sbaRobustLoss"><option value="huber" selected>Huber</option><option value="cauchy">Cauchy</option><option value="none">None</option></select></div>
                             <div class="config-item"><label>Loss param</label><input type="number" id="sbaLossParam" value="1.0" min="0.01" step="0.1"></div>
                             <div class="config-item"><label>Outlier threshold (px, 0=off)</label><input type="number" id="sbaOutlierThreshold" value="30" min="0" step="1"></div>
-                            <div class="config-item"><label title="Cap on 3D points sent to the solver (frames are subsampled evenly). 0 = all.">Max points</label><input type="number" id="sbaMaxPoints" value="60000" min="0" step="5000"></div>
+                            <div class="config-item"><label title="Cap on 3D points sent to the solver (frames are subsampled evenly). 0 = all.">Max points</label><input type="number" id="sbaMaxPoints" value="20000" min="0" step="5000"></div>
                         </div>
                         <div class="config-row">
                             <div class="config-item"><label>Optimize</label>

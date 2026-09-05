@@ -53,6 +53,8 @@ export class Progress {
     }
     show(text = 'Starting…') {
         if (!this.el) return this;
+        clearTimeout(this._hideTimer);
+        this.el.classList.remove('failed');
         this.el.classList.add('active');
         this.startedAt = performance.now();
         this.set(0, text);
@@ -75,7 +77,8 @@ export class Progress {
     hide() {
         if (!this.el) return;
         this.set(1, 'Done');
-        setTimeout(() => this.el.classList.remove('active'), 300);
+        clearTimeout(this._hideTimer);
+        this._hideTimer = setTimeout(() => { if (!this._pending) this.el.classList.remove('active'); else setTimeout(() => this.el.classList.remove('active'), 200); }, 600);
     }
     fail(text = 'Failed') {
         if (!this.el) return;

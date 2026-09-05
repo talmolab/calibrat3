@@ -209,5 +209,16 @@ SBA + reprojection metadata (flat arrays). Imports: calib/board.
 ---
 
 ## tests/
-`run-mjs-tests.mjs` runs `test-*.mjs` (board, geometry, detection-store, covisibility,
-frame-selection, toml) with `harness.mjs`.
+- `harness.mjs` — environment-agnostic `test/run/assert/approx/loadText`; reports to
+  `globalThis.__calibrat3TestReporter` when the browser runner installs one, else console.
+- `run-mjs-tests.mjs` — runs each `test-*.mjs` in its own Node process.
+- `test-runner.html` — imports the same `test-*.mjs` files in the browser
+  (`/tests/test-runner.html`, also on GitHub Pages).
+- `test-board`, `test-geometry`, `test-detection-store`, `test-covisibility`,
+  `test-frame-selection`, `test-folder-loader`, `test-toml`.
+- `e2e/smoke-pipeline.mjs`, `e2e/stress-synthetic.mjs` — Playwright, headless Chromium,
+  real workers/WebCodecs/WASM. See `e2e/README.md`.
+
+## scripts/
+- `make_synthetic_session.py` — renders an N-camera, M-frame synthetic ChArUco session
+  (anipose-style layout) with `calibration_gt.toml` ground truth for the stress test.

@@ -68,8 +68,8 @@ export const controllers = {
 export function viewNames() { return state.views.map(v => v.name); }
 export function viewIndex(name) { return state.views.findIndex(v => v.name === name); }
 
-/** Camera colors (consistent across plots, strips, overlays, 3D). */
-export const CAMERA_COLORS = ['#667eea', '#4ade80', '#fbbf24', '#ef4444', '#a78bfa', '#22d3ee', '#f472b6', '#fb923c'];
+/** Camera colors (consistent across plots, strips, overlays, 3D). Red is reserved for errors. */
+export const CAMERA_COLORS = ['#667eea', '#4ade80', '#fbbf24', '#22d3ee', '#a78bfa', '#f472b6', '#fb923c', '#34d399'];
 export const cameraColor = (i) => CAMERA_COLORS[i % CAMERA_COLORS.length];
 
 /** Reset everything downstream of a fresh video load. */

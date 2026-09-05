@@ -36,10 +36,14 @@ rendered, detected on the main thread and appended DOM per frame. Here:
    detectors cached per board config) and closed there. Per-view in-flight cap is
    2. Thumbnails (160 px JPEG Blobs, view 0) are produced by the worker from the
    frame it already has — never re-decoded.
-2. **Calibration** (`calib-worker.js`, one classic worker that `importScripts`
-   opencv.js and `import()`s the ESM calib modules + the sba wrapper) runs
+2. **Calibration** (`calib-worker.js`, classic workers that `importScripts`
+   opencv.js and `import()` the ESM calib modules + the sba wrapper; a small pool
+   via `loading/calib-client.js` so per-camera intrinsics run in parallel) runs
    `calibrateCameraExtended`, per-frame solvePnP, relative poses, WASM
    triangulation and bundle adjustment. Progress messages are throttled to ~25 Hz.
+   `calibrateCamera`'s LM solve is cubic in the number of frames (a dense
+   (9+6n)-sized system per iteration), which is why frames are subsampled for the
+   fit (default 50) and every valid frame is only *evaluated* afterwards.
 3. **The main thread never loads OpenCV.** Overlays reproject with pure-JS
    `calib/geometry.js` (`projectPoints` from stored rvec/tvec).
 4. **Nothing per-frame in the DOM.** Frame strip (canvas), virtualized table
@@ -92,9 +96,29 @@ The vibe's export used `col·s` — inconsistent; fixed here.
 ```bash
 python3 server.py 8080          # static + HTTP Range (python -m http.server also works)
 node tests/run-mjs-tests.mjs    # unit tests (pure modules; Node ≥ 18)
+# browser: http://localhost:8080/tests/test-runner.html  (same test files, tests/harness.mjs reports to the page)
+# e2e (Playwright, headless Chromium): tests/e2e/README.md
+node tests/e2e/smoke-pipeline.mjs
+SESSION=/tmp/synthetic_session node tests/e2e/stress-synthetic.mjs   # after scripts/make_synthetic_session.py
 ```
 
 `package.json` (`"type": "module"`) exists only so Node runs the `.js` ESM sources.
+Test files must stay environment-agnostic (no `node:` imports outside
+`tests/harness.mjs`'s `isNode` branches) so the browser runner can load them.
+
+Reference numbers (headless Chromium, no GPU, shared CPU; `tests/e2e/stress-synthetic.mjs`
+on a 4-camera x 1200-frame synthetic session with ground truth): batch detection of
+every frame 149 s = 32 detections/s (~105 ms per 1280x1024 frame in a worker, 4 workers),
+main-thread rAF heartbeat never gapping > 185 ms, 1230 decoded frames per 1200 wanted
+(2.5 % overhead), 1200 thumbnails; intrinsics for 4 cameras in 18.6 s (50 coverage-selected
+frames each, cubic cost in frames -> keep the cap modest) with fx within 0.4 %, cx within
+7 px, k1 within 0.003 of ground truth; extrinsics + cross-view reprojection of 84k points in
+2.4 s with camera centres within 1-5 mm and rotations < 0.4 deg; SBA over 42k points /
+157k observations 115 s (roughly linear in points -> default cap 20k). DOM after the run:
+19 table rows, 80 gallery cards, 29 log entries, 57 MB JS heap. Sample session (4 x 21
+frames): detect 2 s, intrinsics 3 s, whole pipeline ~16 s. Original calibration-studio on
+the sample: initial cross-view median 10.5 px -> 6.5 px after SBA; calibrat3: 5.8 -> 3.7 px
+with intrinsics/translations matching to ~1 mm.
 
 ## Deploy
 
@@ -105,6 +129,10 @@ PR under `pr/<n>/` and posts a sticky comment. Repo settings required: Pages sou
 
 ## Gotchas
 
+- **Never `await cv`.** OpenCV.js's Emscripten build sets `cv.then(cb)` but that `then`
+  returns the module itself (a thenable), so `await cv` / `resolve(cv)` recurse forever
+  with no error — the workers silently never become ready. Use the `whenOpenCVReady`
+  pattern (wrap the module in a plain object) as in both workers / `loading/opencv-ready.js`.
 - `pool.detect()` transfers the image: never pass a cached `ImageBitmap` from the
   decoder LRU — `createImageBitmap(bitmap)` a copy first (see `detectCurrentFrame`).
 - Interactive seeks during a batch run share the decoder queue per view; the GOP

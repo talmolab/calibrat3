@@ -1,5 +1,4 @@
-import { test, run, assert, approx } from './harness.mjs';
-import { readFileSync } from 'node:fs';
+import { test, run, assert, approx, loadText } from './harness.mjs';
 import { generateCalibrationToml, parseCalibrationToml, parseBoardToml, generateBoardToml, parseSimpleToml } from '../import-export/toml.js';
 import { DEFAULT_BOARD } from '../calib/board.js';
 
@@ -38,8 +37,8 @@ test('calibration.toml round-trips through the reader', () => {
     assert.equal(parsed.metadata.n, 3);
 });
 
-test('board.toml from sample_session parses to the default board', () => {
-    const text = readFileSync(new URL('../sample_session/board.toml', import.meta.url), 'utf8');
+test('board.toml from sample_session parses to the default board', async () => {
+    const text = await loadText('sample_session/board.toml');
     const { board } = parseBoardToml(text);
     assert.deepEqual(board, { boardX: 8, boardY: 11, squareLength: 24, markerLength: 18.75, dictName: 'DICT_4X4_1000' });
 });

@@ -2,8 +2,12 @@
  * loading/opencv-ready.js — resolve the OpenCV.js module once its WASM
  * runtime is initialized. Works in the main thread and in classic workers.
  *
- * OpenCV.js builds differ: some expose `cv` as a Promise<Module>, others as a
- * Module that fires `onRuntimeInitialized`. This handles both.
+ * GOTCHA: Emscripten's MODULARIZE build of opencv.js exposes `cv.then(cb)`,
+ * but that `then` returns the module object itself (a thenable). `await cv`
+ * or `resolve(cv)` therefore recurses forever with no error. Never await the
+ * module directly — this helper hands it back wrapped in a plain object.
+ * (loading/detect-worker.js and loading/calib-worker.js inline the same logic
+ * because classic workers can't import ES modules statically.)
  */
 
 /**
@@ -16,16 +20,12 @@ export function waitForOpenCV(cvGlobal, timeoutMs = 60000) {
         const timer = setTimeout(() => reject(new Error('OpenCV.js did not initialize in time')), timeoutMs);
         const done = (m) => { clearTimeout(timer); resolve(m); };
         if (!cvGlobal) { clearTimeout(timer); reject(new Error('cv global is undefined')); return; }
+        if (typeof cvGlobal.Mat === 'function') { done(cvGlobal); return; }
         if (typeof cvGlobal.then === 'function') {
-            cvGlobal.then(m => (m && m.Mat) ? done(m) : waitModule(m, done));
+            cvGlobal.then((m) => done(m && typeof m.Mat === 'function' ? m : cvGlobal));
             return;
         }
-        waitModule(cvGlobal, done);
+        const prev = cvGlobal.onRuntimeInitialized;
+        cvGlobal.onRuntimeInitialized = () => { if (typeof prev === 'function') prev(); done(cvGlobal); };
     });
-}
-
-function waitModule(m, done) {
-    if (m && typeof m.Mat === 'function') { done(m); return; }
-    const prev = m.onRuntimeInitialized;
-    m.onRuntimeInitialized = () => { if (typeof prev === 'function') prev(); done(m); };
 }

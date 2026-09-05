@@ -129,10 +129,13 @@ export async function computeCrossViewReprojection(sba, store, intrinsics, extri
         if (cnt) allErrs.push(rec.meanErr);
     }
 
-    const summarize = (arr) => arr.length ? {
-        n: arr.length, mean: arr.reduce((a, b) => a + b, 0) / arr.length,
-        median: percentile(arr, 0.5), p95: percentile(arr, 0.95), max: Math.max(...arr),
-    } : { n: 0, mean: NaN, median: NaN, p95: NaN, max: NaN };
+    // No spread over large arrays (Math.max(...arr) throws RangeError past ~100k args).
+    const summarize = (arr) => {
+        if (!arr.length) return { n: 0, mean: NaN, median: NaN, p95: NaN, max: NaN };
+        let sum = 0, max = -Infinity;
+        for (const v of arr) { sum += v; if (v > max) max = v; }
+        return { n: arr.length, mean: sum / arr.length, median: percentile(arr, 0.5), p95: percentile(arr, 0.95), max };
+    };
 
     const summary = {
         frames: frameRecs.length,

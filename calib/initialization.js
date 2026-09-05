@@ -52,9 +52,9 @@ function startWorkers() {
     controllers.pool = pool;
     controllers.calib = calib;
     const t0 = performance.now();
-    status.textContent = `workers: loading OpenCV (${pool.size} detect + 1 calib)…`;
+    status.textContent = `workers: loading OpenCV (${pool.size} detect + ${calib.size} calib)…`;
     Promise.all([pool.init(), calib.init()]).then(() => {
-        status.textContent = `workers: ${pool.size} detect + 1 calib ready`;
+        status.textContent = `workers: ${pool.size} detect + ${calib.size} calib ready`;
         status.className = 'worker-status ok';
         $('poolInfo').textContent = String(pool.size);
         log(`All workers ready in ${fmtMs(performance.now() - t0)}`, 'success');
