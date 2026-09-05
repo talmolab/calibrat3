@@ -50,14 +50,26 @@ export function setupIntrinsicsStage() {
 
 function setActive() { if (state.activeExclusion !== 'intrinsics') { state.activeExclusion = 'intrinsics'; emit('active-exclusion', { kind: 'intrinsics' }); } }
 
-function perCameraText(f) {
+/** Per-camera intrinsic error entries for a frame: [{name, err, used}] (NaN err if none). */
+function perCameraErrors(f) {
     return state.views.map((v, i) => {
         const intr = state.intrinsics[i];
-        if (!intr || !intr.perFrame) return `${v.name}: –`;
+        if (!intr || !intr.perFrame) return { name: v.name, err: NaN, used: false };
         const idx = indexOf(intr.perFrame.frames, f);
-        if (idx < 0) return `${v.name}: –`;
-        return `${v.name}: ${intr.perFrame.errors[idx].toFixed(2)}${intr.perFrame.used[idx] ? '' : '°'}`;
-    }).join('  ');
+        if (idx < 0) return { name: v.name, err: NaN, used: false };
+        return { name: v.name, err: intr.perFrame.errors[idx], used: !!intr.perFrame.used[idx] };
+    });
+}
+
+/** One line per camera (tooltips). ° marks frames evaluated but not used in the fit. */
+function perCameraText(f) {
+    return perCameraErrors(f).map(e => `${e.name.padEnd(10)} ${Number.isFinite(e.err) ? e.err.toFixed(2) + (e.used ? '' : '°') : '–'}`).join('\n');
+}
+
+/** Compact caption for gallery cards: the worst three cameras. */
+function perCameraShort(f) {
+    const es = perCameraErrors(f).filter(e => Number.isFinite(e.err)).sort((a, b) => b.err - a.err).slice(0, 3);
+    return es.map(e => `${e.name}:${e.err.toFixed(2)}`).join(' ');
 }
 
 function indexOf(frames, f) {
@@ -201,7 +213,7 @@ export function renderResults() {
     }), { thresholds: [1], note: 'white bar = median · hollow = evaluated only' });
 
     worstOrder = frames.slice().sort((a, b) => frameMax.get(b) - frameMax.get(a));
-    gallery.setItems(frames.map(f => ({ frame: f, value: frameMax.get(f), excluded: state.exclusions.intrinsics.has(f), used: used.has(f), sub: perCameraText(f) })));
+    gallery.setItems(frames.map(f => ({ frame: f, value: frameMax.get(f), excluded: state.exclusions.intrinsics.has(f), used: used.has(f), sub: perCameraShort(f) })));
     gallery.setCurrent(state.currentFrame);
     strip.setCurrent(state.currentFrame);
     refreshExclusionInfo();

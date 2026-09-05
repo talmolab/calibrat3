@@ -18,6 +18,10 @@
  */
 
 const CHUNK_SIZE = 1024 * 1024;
+const MAX_STREAM_GAP = 64;      // continue an open stream if the target is at most this many chunks ahead
+const STREAM_WAIT_MS = 250;     // how long to wait for a target frame before feeding more / flushing
+const REORDER_FEED = 6;         // chunks fed past the target so B-frame decoders emit it without a flush
+const GOP_CACHE_MAX_BYTES = 96 * 1024 * 1024;   // per decoder: bytes of the current GOP kept in memory
 
 export class OnDemandVideoDecoder {
     constructor(options = {}) {
@@ -36,8 +40,12 @@ export class OnDemandVideoDecoder {
         this.config = null;
         this.info = null;
         this._queue = Promise.resolve(); // serializes decode operations
+        this._stream = null;             // open display stream: {nextDecode: next chunk to feed, nextOut: next presentation frame the decoder will emit}
+        this._waiters = new Map();       // frameIdx -> resolve(bool) for display requests
+        this._keepLo = -1; this._keepHi = -1;   // presentation frames to bitmap when their output arrives
+        this.bitmapScale = options.bitmapScale || 1;   // <1: cache display bitmaps at reduced resolution (many-camera sessions)
         this._closed = false;
-        this.stats = { decoded: 0, bitmapped: 0, gops: 0, bytesRead: 0 };
+        this.stats = { decoded: 0, bitmapped: 0, gops: 0, bytesRead: 0, restarts: 0, timeouts: 0, waitMs: 0, readMs: 0, bitmapMs: 0 };
     }
 
     // ------------------------------------------------------------------ init
@@ -147,8 +155,37 @@ export class OnDemandVideoDecoder {
         return await this.file.slice(offset, end).arrayBuffer();
     }
 
-    /** Read sample payloads for decode indices [start, end] (coalescing contiguous byte ranges). */
+    /**
+     * Read sample payloads for decode indices [start, end]. Ranges inside one GOP are
+     * served from a per-decoder byte cache of the whole GOP (one file read per GOP
+     * instead of one per step — File.slice() round-trips cost tens of ms each when
+     * 18 views step together).
+     */
     async readSampleRange(start, end) {
+        const g = this._gopIndexOfDecode(start);
+        const [gs, ge] = this._gopRange(g);
+        if (end <= ge) {
+            const first = this.samples[gs], lastS = this.samples[ge];
+            const spanStart = Math.min(first.offset, lastS.offset);
+            let spanEnd = 0;
+            for (let i = gs; i <= ge; i++) spanEnd = Math.max(spanEnd, this.samples[i].offset + this.samples[i].size);
+            if (spanEnd - spanStart <= GOP_CACHE_MAX_BYTES) {
+                if (!this._gopBuf || this._gopBuf.gop !== g) {
+                    this._gopBuf = { gop: g, base: spanStart, bytes: new Uint8Array(await this.readBytes(spanStart, spanEnd - spanStart)) };
+                }
+                const out = new Array(end - start + 1);
+                for (let i = start; i <= end; i++) {
+                    const smp = this.samples[i];
+                    const o = smp.offset - this._gopBuf.base;
+                    out[i - start] = this._gopBuf.bytes.subarray(o, o + smp.size);
+                }
+                return out;
+            }
+        }
+        return this._readSampleRangeDirect(start, end);
+    }
+
+    async _readSampleRangeDirect(start, end) {
         const out = new Array(end - start + 1);
         let regionStart = start;
         while (regionStart <= end) {
@@ -216,6 +253,7 @@ export class OnDemandVideoDecoder {
     _resetDecoder() {
         if (this.decoder) { try { this.decoder.close(); } catch (e) { /* ignore */ } }
         this.decoder = null;
+        this._stream = null;
     }
 
     _run(fn) {
@@ -232,6 +270,7 @@ export class OnDemandVideoDecoder {
      */
     async getFrame(frameIdx) {
         if (this._closed || frameIdx < 0 || frameIdx >= this.samples.length) return null;
+        this._pinned = frameIdx;   // never evict the frame the caller is about to draw
         const hit = this._cacheGet(frameIdx);
         if (hit) return { bitmap: hit, fromCache: true };
         return this._run(async () => {
@@ -243,39 +282,121 @@ export class OnDemandVideoDecoder {
         });
     }
 
+    /**
+     * Streaming display decode. The decoder is kept OPEN between calls: when the
+     * requested frame is ahead of the last chunk we fed (playback, stepping), only
+     * the missing chunks are fed — one decode per frame instead of a decode from
+     * the keyframe. A backward or far seek restarts at the preceding keyframe.
+     * We never flush() (that would force a keyframe restart); if the target output
+     * has not arrived after `STREAM_WAIT_MS` we flush once and restart next time.
+     */
     async _decodeForDisplay(frameIdx) {
         const d = this.presentation[frameIdx];
         const gop = this._gopIndexOfDecode(d);
-        const [gopStart, gopEnd] = this._gopRange(gop);
-        // Without B-frames, decode order == presentation order so we can stop early.
-        const end = this.hasBFrames ? gopEnd : Math.min(gopEnd, d + this.lookahead);
-        const wantLo = frameIdx, wantHi = frameIdx + this.lookahead;
-        const data = await this.readSampleRange(gopStart, end);
-        const pending = [];
-        await new Promise((resolve, reject) => {
-            this._ensureDecoder((frame) => {
-                const f = this._frameOfTimestamp(frame.timestamp);
-                if (f >= wantLo && f <= wantHi && !this.cache.has(f)) {
-                    pending.push(createImageBitmap(frame).then(bmp => {
-                        this._cachePut(f, bmp);
-                        this.stats.bitmapped++;
-                    }).catch(() => {}).finally(() => frame.close()));
+        const [gopStart] = this._gopRange(gop);
+        const last = this.samples.length - 1;
+        // Continue the open stream when the wanted PRESENTATION frame has not been emitted yet
+        // (outputs arrive in presentation order regardless of B-frame decode order).
+        const st = this._stream;
+        const canContinue = st && this.decoder && this.decoder.state === 'configured' &&
+            frameIdx >= st.nextOut && frameIdx - st.nextOut <= MAX_STREAM_GAP && st.nextDecode <= last;
+        if (!canContinue) {
+            this._stream = { nextDecode: gopStart, nextOut: this.frameOfDecode[gopStart] };
+            this.stats.restarts++;
+        }
+        if (this._reorderFeed === undefined) this._reorderFeed = this.hasBFrames ? REORDER_FEED : 1;
+        const reorder = this._reorderFeed;   // learned: grows when the decoder holds frames longer than expected
+        // Keep everything the decoder will emit from the target onwards (lookahead + reorder
+        // depth): those are the frames playback asks for next, and discarding them would
+        // force a restart from the keyframe.
+        const keepLo = frameIdx, keepHi = Math.min(last, frameIdx + this.lookahead);
+        this._keepLo = keepLo; this._keepHi = Math.min(last, keepHi + reorder + 2);
+        this._installDisplayHandler();
+        let waiter;
+        const arrived = new Promise((resolve) => { waiter = resolve; });
+        this._waiters.set(frameIdx, waiter);
+        try {
+            // Feed at least up to the target's chunk (+ reorder depth); if the decoder still holds
+            // the frame, feed a few more chunks; only flush when the stream has no chunks left.
+            let feedTo = Math.min(last, Math.max(this.presentation[frameIdx], this.presentation[keepHi]) + reorder);
+            let done = false;
+            const tStart = performance.now();
+            while (!done) {
+                if (this._stream.nextDecode <= feedTo) {
+                    const from = this._stream.nextDecode;
+                    const tr = performance.now();
+                    const data = await this.readSampleRange(from, feedTo);
+                    this.stats.readMs += performance.now() - tr;
+                    for (let i = from; i <= feedTo; i++) {
+                        const smp = this.samples[i];
+                        this.decoder.decode(new EncodedVideoChunk({
+                            type: smp.isKeyframe ? 'key' : 'delta', timestamp: smp.cts, duration: smp.duration, data: data[i - from],
+                        }));
+                    }
+                    this._stream.nextDecode = feedTo + 1;
+                }
+                const tw = performance.now();
+                const got = await Promise.race([arrived, new Promise(r => setTimeout(() => r('timeout'), STREAM_WAIT_MS))]);
+                this.stats.waitMs += performance.now() - tw;
+                if (got !== 'timeout') { done = true; break; }
+                // Still chewing through queued chunks (big restart under load): keep waiting, don't feed more.
+                if (this.decoder && this.decoder.decodeQueueSize > 0) { if (performance.now() - tStart > 60000) throw new Error('decoder stalled'); continue; }
+                this.stats.timeouts++;
+                if (this._stream.nextDecode <= last) {
+                    // Decoder output delay is deeper than assumed: feed more now and remember for next time.
+                    this._reorderFeed = Math.min(16, this._reorderFeed + 4);
+                    this._keepHi = Math.min(last, keepHi + this._reorderFeed + 2);
+                    feedTo = Math.min(last, this._stream.nextDecode + 4);
                 } else {
-                    frame.close();
+                    try { await this.decoder.flush(); } catch (_) { /* handled by error cb */ }
+                    this._stream = null;
+                    await Promise.race([arrived, new Promise(r => setTimeout(r, 200))]);
+                    done = true;
                 }
-            }, (e) => { this._resetDecoder(); reject(e); });
-            try {
-                for (let i = gopStart; i <= end; i++) {
-                    const s = this.samples[i];
-                    this.decoder.decode(new EncodedVideoChunk({
-                        type: s.isKeyframe ? 'key' : 'delta', timestamp: s.cts, duration: s.duration, data: data[i - gopStart],
-                    }));
-                }
-                this.decoder.flush().then(resolve, reject);
-            } catch (e) { this._resetDecoder(); reject(e); }
+            }
+        } catch (e) {
+            this._waiters.delete(frameIdx);
+            this._resetDecoder();
+            throw e;
+        }
+        this._waiters.delete(frameIdx);
+    }
+
+    /** Route decoder outputs for the display path: bitmap wanted frames, close the rest. */
+    _installDisplayHandler() {
+        this._ensureDecoder((frame) => {
+            const f = this._frameOfTimestamp(frame.timestamp);
+            if (this._stream) this._stream.nextOut = f + 1;
+            const w = this._waiters.get(f);
+            if (f >= this._keepLo && f <= this._keepHi && !this.cache.has(f)) {
+                const opts = this.bitmapScale < 1
+                    ? { resizeWidth: Math.round(frame.displayWidth * this.bitmapScale), resizeHeight: Math.round(frame.displayHeight * this.bitmapScale), resizeQuality: 'low' }
+                    : undefined;
+                const tb = performance.now();
+                createImageBitmap(frame, opts).then((bmp) => {
+                    this.stats.bitmapMs += performance.now() - tb;
+                    this._cachePut(f, bmp);
+                    this.stats.bitmapped++;
+                    if (w) w(true);
+                }).catch(() => { if (w) w(false); }).finally(() => frame.close());
+            } else {
+                frame.close();
+                if (w) w(false);
+            }
+        }, (e) => {
+            this.log(`${this.name}: decoder error: ${e.message || e}`, 'warn');
+            this._resetDecoder();
+            for (const w of this._waiters.values()) w(false);
+            this._waiters.clear();
         });
-        await Promise.all(pending);
-        this.stats.gops++;
+    }
+
+    /** Invalidate the open display stream (batch decode or errors). */
+    _closeStream() {
+        this._stream = null;
+        this._keepLo = -1; this._keepHi = -1;
+        for (const w of this._waiters.values()) w(false);
+        this._waiters.clear();
     }
 
     _cacheGet(f) {
@@ -288,9 +409,11 @@ export class OnDemandVideoDecoder {
     _cachePut(f, bmp) {
         if (this.cache.has(f)) { this.cache.get(f).close(); this.cache.delete(f); }
         while (this.cache.size >= this.cacheSize) {
-            const k = this.cache.keys().next().value;
-            this.cache.get(k).close();
-            this.cache.delete(k);
+            let victim = null;
+            for (const k of this.cache.keys()) { if (k !== this._pinned) { victim = k; break; } }
+            if (victim === null) break;
+            this.cache.get(victim).close();
+            this.cache.delete(victim);
         }
         this.cache.set(f, bmp);
     }
@@ -344,6 +467,7 @@ export class OnDemandVideoDecoder {
     }
 
     async *_iterateGop(gopStart, end, wantedSet, maxPending, signal) {
+        this._closeStream();
         const data = await this.readSampleRange(gopStart, end);
         const pending = [];     // {frame, videoFrame} awaiting yield
         const outOfOrder = [];  // wanted frames that arrived early (B-frames): sort before yield
@@ -407,6 +531,7 @@ export class OnDemandVideoDecoder {
 
     close() {
         this._closed = true;
+        this._gopBuf = null;
         this._resetDecoder();
         for (const b of this.cache.values()) b.close();
         this.cache.clear();
@@ -470,9 +595,11 @@ export class VideoController {
                     const view = this.state.views[i];
                     const r = results[i];
                     if (r && r.bitmap) {
-                        view.ctx.clearRect(0, 0, view.canvas.width, view.canvas.height);
-                        view.ctx.drawImage(r.bitmap, 0, 0);
-                        view.lastBitmap = r.bitmap;
+                        try {
+                            view.ctx.clearRect(0, 0, view.canvas.width, view.canvas.height);
+                            view.ctx.drawImage(r.bitmap, 0, 0, view.canvas.width, view.canvas.height);
+                            view.lastBitmap = r.bitmap;
+                        } catch (e) { /* bitmap evicted between fetch and draw: keep the previous image */ }
                     }
                 }
                 this.state.currentFrame = target;
@@ -489,7 +616,7 @@ export class VideoController {
         for (const view of this.state.views) {
             if (view.lastBitmap) {
                 view.ctx.clearRect(0, 0, view.canvas.width, view.canvas.height);
-                try { view.ctx.drawImage(view.lastBitmap, 0, 0); } catch (e) { /* bitmap may be closed */ }
+                try { view.ctx.drawImage(view.lastBitmap, 0, 0, view.canvas.width, view.canvas.height); } catch (e) { /* bitmap may be closed */ }
             }
         }
         this.callbacks.drawOverlays && this.callbacks.drawOverlays(this.state.currentFrame);

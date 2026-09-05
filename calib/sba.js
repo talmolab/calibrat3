@@ -7,7 +7,7 @@
  * corners in every camera that saw the point.
  */
 
-import { quaternionToMatrix, matrixToRodrigues, toWasmCamera } from './geometry.js';
+import { quaternionToMatrix, matrixToRodrigues, toWasmCamera, projectPoint } from './geometry.js';
 
 /**
  * @param {{frames: object[]}} reproj result of computeCrossViewReprojection
@@ -39,23 +39,25 @@ export function prepareSbaInput(reproj, intrinsics, extrinsics, opts = {}) {
         frames = frames.filter((_, i) => i % frameStride === 0);
     }
 
-    const points = [], observations = [], pointToFrame = [], pointIds = [];
+    const points = [], observations = [], pointToFrame = [], pointIds = [], pointErr = [];
     for (const rec of frames) {
         for (let i = 0; i < rec.n; i++) {
             const x = rec.xyz[3 * i];
             if (!isFinite(x)) continue;
-            let nobs = 0;
+            let nobs = 0, errSum = 0, errN = 0;
             const obsHere = [];
             for (let v = 0; v < nViews; v++) {
                 const vr = rec.views[v];
                 if (!vr || !vr.mask[i] || camIdx[v] < 0) continue;
                 obsHere.push({ camera_idx: camIdx[v], point_idx: points.length, x: vr.det[2 * i], y: vr.det[2 * i + 1] });
                 nobs++;
+                if (Number.isFinite(vr.err[i])) { errSum += vr.err[i]; errN++; }
             }
             if (nobs < 2) continue;
             points.push([x, rec.xyz[3 * i + 1], rec.xyz[3 * i + 2]]);
             pointToFrame.push(rec.frame);
             pointIds.push(rec.ids[i]);
+            pointErr.push(errN ? errSum / errN : NaN);   // mean reprojection error of the point over its cameras
             for (const o of obsHere) observations.push(o);
         }
     }
@@ -63,7 +65,7 @@ export function prepareSbaInput(reproj, intrinsics, extrinsics, opts = {}) {
     return {
         cameras, points, observations, point_to_frame: pointToFrame,
         meta: {
-            cameraViews, pointIds, frameStride,
+            cameraViews, pointIds, pointErr, frameStride,
             numCameras: cameras.length, numPoints: points.length, numObservations: observations.length,
             numFrames: frames.length,
         },
@@ -100,6 +102,65 @@ export function applySbaResults(result, input, intrinsics, extrinsics) {
         newE[v] = { ...extrinsics[v], R, rvec: matrixToRodrigues(R), tvec: cam.translation.slice(), refinedBySba: true };
     });
     return { intrinsics: newI, extrinsics: newE };
+}
+
+/**
+ * Per-observation reprojection errors of an SBA input against a solver result
+ * (refined cameras + points). `result.points[j]` corresponds to `input.points[j]`.
+ * @returns {Float32Array} error per observation of `input`
+ */
+export function evaluateSbaObservations(result, input) {
+    const cams = result.cameras.map(c => ({
+        K: [[c.focal[0], 0, c.principal[0]], [0, c.focal[1], c.principal[1]], [0, 0, 1]],
+        dist: c.distortion, R: quaternionToMatrix(c.rotation), t: c.translation,
+    }));
+    const errs = new Float32Array(input.observations.length);
+    for (let i = 0; i < input.observations.length; i++) {
+        const o = input.observations[i];
+        const X = result.points[o.point_idx];
+        if (!X) { errs[i] = NaN; continue; }
+        const [u, v] = projectPoint(X, cams[o.camera_idx]);
+        errs[i] = Math.hypot(u - o.x, v - o.y);
+    }
+    return errs;
+}
+
+/**
+ * Keep only observations with keep[i] truthy, drop points left with < 2
+ * observations, renumber point indices. Returns a new input whose
+ * `meta.pointMap[j]` is the original point index of new point j and
+ * `meta.obsMap[k]` the original observation index of new observation k.
+ */
+export function filterSbaInput(input, keep) {
+    const obsPerPoint = new Int32Array(input.points.length);
+    for (let i = 0; i < input.observations.length; i++) if (keep[i]) obsPerPoint[input.observations[i].point_idx]++;
+    const pointMap = [], newIdx = new Int32Array(input.points.length).fill(-1);
+    for (let p = 0; p < input.points.length; p++) if (obsPerPoint[p] >= 2) { newIdx[p] = pointMap.length; pointMap.push(p); }
+    const observations = [], obsMap = [];
+    for (let i = 0; i < input.observations.length; i++) {
+        const o = input.observations[i];
+        if (!keep[i] || newIdx[o.point_idx] < 0) continue;
+        observations.push({ camera_idx: o.camera_idx, point_idx: newIdx[o.point_idx], x: o.x, y: o.y });
+        obsMap.push(i);
+    }
+    return {
+        cameras: input.cameras.map(c => ({ ...c, rotation: c.rotation.slice(), translation: c.translation.slice(), focal: c.focal.slice(), principal: c.principal.slice(), distortion: c.distortion.slice() })),
+        points: pointMap.map(p => input.points[p].slice()),
+        observations,
+        point_to_frame: pointMap.map(p => input.point_to_frame[p]),
+        meta: { ...input.meta, pointMap, obsMap, numPoints: pointMap.length, numObservations: observations.length },
+    };
+}
+
+/**
+ * Geometric threshold schedule from `start` down to `end` over `rounds` rounds
+ * (anipose's bundle_adjust_iter uses start_mu -> end_mu the same way).
+ */
+export function outlierSchedule(start, end, rounds) {
+    if (rounds <= 1) return [end];
+    const out = [];
+    for (let r = 0; r < rounds; r++) out.push(start * Math.pow(end / start, r / (rounds - 1)));
+    return out;
 }
 
 /** Default solver config (mirrors the UI defaults). */

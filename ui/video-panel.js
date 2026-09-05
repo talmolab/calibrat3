@@ -12,6 +12,7 @@ import { drawAllOverlays } from './overlays.js';
 import { emit, on } from './events.js';
 
 const keyHandlers = [];   // [(e) => boolean]
+const BITMAP_BUDGET = 640 * 1024 * 1024;   // total ImageBitmap cache across all views
 
 /** Register a hotkey handler; return true from it to stop further processing. */
 export function registerKeyHandler(fn) { keyHandlers.push(fn); }
@@ -22,7 +23,8 @@ export function setupVideoPanel() {
         onFrameRendered: (frame, ms) => {
             updateFrameInfo(frame);
             emit('frame', { frame, ms });
-            if (!state.isPlaying && ms > 250) log(`Frame ${frame}: ${fmtMs(ms)} (decode from keyframe)`, 'debug');
+            if (ms > 250) log(`Frame ${frame}: ${fmtMs(ms)}${state.views.some(v => v.decoder.stats.restarts !== v.decoder._lastRestarts) ? ' (restarted from keyframe)' : ''}`, 'debug');
+            for (const v of state.views) v.decoder._lastRestarts = v.decoder.stats.restarts;
         },
         onPlaybackStateChange: (playing) => { $('playBtn').textContent = playing ? '❚❚ Pause' : '▶ Play'; },
         onKey: (e) => {
@@ -79,7 +81,8 @@ export async function loadSession(session) {
     ])));
     const grid = $('videoGrid');
     grid.replaceChildren();
-    grid.className = `video-grid cols-${session.views.length <= 1 ? 1 : (session.views.length <= 4 ? 2 : 3)}`;
+    const n = session.views.length;
+    grid.className = `video-grid cols-${n <= 1 ? 1 : n <= 4 ? 2 : n <= 9 ? 3 : n <= 16 ? 4 : n <= 25 ? 5 : 6}`;
     $('videoPanel').classList.remove('hidden');
     $('mainLayout').classList.remove('no-videos');
 
@@ -117,6 +120,18 @@ export async function loadSession(session) {
         showError('No video could be opened. Check the codec (H.264/H.265/VP8/VP9/AV1 via WebCodecs) and the folder layout.');
         return false;
     }
+    // Bitmap cache budget. ImageBitmaps cost w*h*4 bytes. With many views the on-screen cells
+    // are small, so cache display bitmaps at reduced resolution (overlays still draw at native
+    // resolution on the canvas) and keep enough frames per view for smooth stepping/playback
+    // (>= reorder depth + lookahead). Zooming a reduced-resolution view is softer, by design.
+    const nV = state.views.length;
+    const nativeBytes = state.views.reduce((a, v) => a + v.info.width * v.info.height * 4, 0) / nV;
+    const MIN_FRAMES = 12;   // >= lookahead + B-frame reorder feed + slack, so stepping never restarts a GOP
+    let scale = 1;
+    while (scale > 0.25 && MIN_FRAMES * nativeBytes * scale * scale * nV > BITMAP_BUDGET) scale = Math.max(0.25, scale - 0.125);
+    const perView = Math.max(MIN_FRAMES, Math.floor(BITMAP_BUDGET / (nativeBytes * scale * scale) / nV));
+    for (const v of state.views) { v.decoder.cacheSize = Math.min(perView, 32); v.decoder.lookahead = Math.max(1, Math.min(8, perView - 10)); v.decoder.bitmapScale = scale; }
+    log(`Frame cache: ${Math.min(perView, 32)} bitmaps/view at ${(scale * 100).toFixed(0)}% resolution (${(nativeBytes * scale * scale / 1e6).toFixed(1)} MB each, ${nV} views), lookahead ${state.views[0].decoder.lookahead}`, scale < 1 ? 'info' : 'debug');
     const counts = state.views.map(v => v.info.totalFrames);
     state.totalFrames = Math.min(...counts);
     state.fps = state.views[0].info.fps;

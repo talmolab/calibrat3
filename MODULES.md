@@ -67,9 +67,10 @@ ids seen by ≥2 cameras, batched `triangulatePoints`, per-camera reprojection; 
 typed-array records + summary. `indexReprojectionByFrame`. Imports: geometry.
 
 ### calib/sba.js
-`prepareSbaInput(reproj, intrinsics, extrinsics, {excludedFrames, maxPoints})`,
-`sbaReferenceIndex`, `applySbaResults(result, input, intrinsics, extrinsics)` → new
-arrays, `DEFAULT_SBA_CONFIG`. Imports: geometry.
+`prepareSbaInput(reproj, intrinsics, extrinsics, {excludedFrames, maxPoints})` (with
+`meta.pointErr` per point), `filterSbaInput(input, keepMask)`, `evaluateSbaObservations`,
+`outlierSchedule(start, end, rounds)`, `sbaReferenceIndex`, `applySbaResults(result,
+input, intrinsics, extrinsics)` → new arrays, `DEFAULT_SBA_CONFIG`. Imports: geometry.
 
 ### calib/initialization.js
 `initApp()` — wires log panel, stages, video panel, loaders (sample / folder / saved
@@ -158,8 +159,9 @@ board.toml / session. Imports: app-state, import-export/*, log-panel, stages, ev
 ## loading/
 
 ### loading/video.js
-`OnDemandVideoDecoder` — `init(url|File)`, `getFrame(i)` (LRU ImageBitmap, decode from
-keyframe, only [i, i+lookahead] bitmapped), `iterateFrames(frames, {maxPending, signal})`
+`OnDemandVideoDecoder` — `init(url|File)`, `getFrame(i)` (LRU ImageBitmap; streaming
+display decode that keeps the decoder open between seeks, GOP byte cache, optional
+reduced-resolution `bitmapScale`), `iterateFrames(frames, {maxPending, signal})`
 (single sequential pass, GOP-grouped, back-pressured, yields `{frame, videoFrame}`),
 `readSampleRange`, `close`, `stats`. `VideoController` — coalesced `seekToFrame`,
 `redraw`, playback, seekbar, keyboard, zoom/pan. Imports: none.
@@ -180,7 +182,8 @@ Requests: `intrinsics`, `extrinsics`, `reprojection`, `sba`, `ping`; replies `pr
 / `result` / `error` / `log`.
 
 ### loading/calib-client.js
-`CalibWorker({log})` — `init`, `request(type, payload, {onProgress})`, `terminate`.
+`CalibWorker({log, size})` — a small pool (default `min(4, cores-2)`) so per-camera
+intrinsics run in parallel; `init`, `request(type, payload, {onProgress})`, `terminate`.
 
 ### loading/folder-loader.js
 `buildSession(entries)` (flat / nested layouts, board.toml discovery),
@@ -215,9 +218,9 @@ SBA + reprojection metadata (flat arrays). Imports: calib/board.
 - `test-runner.html` — imports the same `test-*.mjs` files in the browser
   (`/tests/test-runner.html`, also on GitHub Pages).
 - `test-board`, `test-geometry`, `test-detection-store`, `test-covisibility`,
-  `test-frame-selection`, `test-folder-loader`, `test-toml`.
-- `e2e/smoke-pipeline.mjs`, `e2e/stress-synthetic.mjs` — Playwright, headless Chromium,
-  real workers/WebCodecs/WASM. See `e2e/README.md`.
+  `test-frame-selection`, `test-folder-loader`, `test-sba`, `test-toml`.
+- `e2e/smoke-pipeline.mjs`, `e2e/stress-synthetic.mjs`, `e2e/real-session.mjs` — Playwright,
+  headless Chromium, real workers/WebCodecs/WASM. See `e2e/README.md`.
 
 ## scripts/
 - `make_synthetic_session.py` — renders an N-camera, M-frame synthetic ChArUco session

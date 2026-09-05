@@ -52,6 +52,11 @@ code { background: #111; padding: 1px 5px; border-radius: 3px; font-size: 12px; 
 .video-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .video-grid.cols-1 { grid-template-columns: 1fr; }
 .video-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.video-grid.cols-4 { grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.video-grid.cols-5 { grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.video-grid.cols-6 { grid-template-columns: repeat(6, 1fr); gap: 3px; }
+.video-grid.cols-4 .video-label, .video-grid.cols-5 .video-label, .video-grid.cols-6 .video-label { font-size: 10px; padding: 1px 5px; }
+.video-grid.cols-4 .video-metrics, .video-grid.cols-5 .video-metrics, .video-grid.cols-6 .video-metrics { display: none; }
 .video-cell { background: #000; border-radius: 6px; overflow: hidden; position: relative; cursor: zoom-in; }
 .video-cell.zoomed { cursor: grab; }
 .video-cell.zoomed.panning { cursor: grabbing; }
@@ -143,9 +148,11 @@ input[type=number] { width: 78px; }
 .data-table th { background: var(--panel3); padding: 6px 8px; text-align: left; font-weight: 600; border-bottom: 1px solid var(--border); font-family: system-ui, sans-serif; }
 .data-table td { padding: 5px 8px; border-bottom: 1px solid #2f2f2f; white-space: nowrap; }
 .data-table tr:hover td { background: #2a2a2a; }
-.two-col { display: grid; grid-template-columns: minmax(220px, 1fr) 2fr; gap: 16px; }
-@media (max-width: 1100px) { .two-col { grid-template-columns: 1fr; } }
-.covis-grid { display: grid; gap: 2px; font-family: ui-monospace, monospace; font-size: 11.5px; }
+.table-scroll { overflow-x: auto; overflow-y: hidden; max-width: 100%; margin: 6px 0 10px; padding-bottom: 4px; scrollbar-width: thin; }
+.table-scroll .data-table { width: auto; min-width: 100%; margin: 0; }
+.table-scroll::-webkit-scrollbar { height: 8px; }
+.table-scroll::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+.covis-grid { display: grid; gap: 2px; font-family: ui-monospace, monospace; font-size: 11.5px; width: max-content; }
 .covis-cell { background: #1a1a1a; padding: 4px 6px; text-align: center; border-radius: 3px; }
 .covis-cell.head { color: var(--muted); }
 .covis-cell.diag { background: transparent; }

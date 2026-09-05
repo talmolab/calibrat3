@@ -35,7 +35,26 @@ rendered, detected on the main thread and appended DOM per frame. Here:
    TRANSFERRED to `detect-worker.js` (OpenCV.js in the worker; dictionary/board/
    detectors cached per board config) and closed there. Per-view in-flight cap is
    2. Thumbnails (160 px JPEG Blobs, view 0) are produced by the worker from the
-   frame it already has — never re-decoded.
+   frame it already has — never re-decoded. The pool uses most cores
+   (`min(12, hardwareConcurrency - 2)` workers). "Fast marker search" (opt-in)
+   finds markers on a half-resolution image and refines corners at full
+   resolution: ~2x faster on frames with a board, but small/far boards lose
+   corners, so it is off by default.
+1b. **Display decode is streaming** (`_decodeForDisplay`). The decoder stays OPEN
+   between seeks: stepping/playback feeds only the next chunk(s) and waits for the
+   target frame to be emitted (outputs come in presentation order); everything the
+   decoder emits from the target on is kept, up to `lookahead + reorder depth`, so
+   the next steps are cache hits. Only a backward/far seek restarts at the
+   preceding keyframe. The bytes of the current GOP are read once per view
+   (`readSampleRange` GOP cache) — `File.slice()` round-trips cost tens of ms each
+   with 18 views. The output delay of B-frame decoders is learned per decoder
+   (`_reorderFeed` grows on a timeout); while `decodeQueueSize > 0` we just wait.
+   `ui/video-panel.js` budgets ImageBitmaps (~640 MB total): with many/large views
+   the display cache holds reduced-resolution bitmaps (`bitmapScale`, drawn scaled
+   onto the native-size canvas — overlays stay native) so >= 12 frames per view fit.
+   Measured on the 18 x 1680x1200 session: 1.0 decode per displayed frame per view,
+   0 keyframe restarts while stepping (it was ~10 decodes and a GOP restart every
+   frame before).
 2. **Calibration** (`calib-worker.js`, classic workers that `importScripts`
    opencv.js and `import()` the ESM calib modules + the sba wrapper; a small pool
    via `loading/calib-client.js` so per-camera intrinsics run in parallel) runs
@@ -67,6 +86,30 @@ with a sorted `frames: Int32Array` (binary search to look up). Exclusions are
 - `state.extrinsics[v]`: `{R, rvec, tvec, chain, pairStd}` or `{error}`; reference = identity.
 - `state.reproj`: `{frames:[{frame, n, ids, xyz, views:[{mask, det, proj, err, mean, max, count}|null], meanErr, maxErr}], summary}`;
   `state.reprojByFrame` is its Map index.
+
+### Bundle adjustment with anipose-style outlier rejection (`ui/stage-extrinsics.js` runSba)
+
+Rounds with a geometric per-POINT error threshold from a start value (default: p95 of
+the initial per-point errors) down to the final value (default 3 px); each round
+fits only points whose mean reprojection error is below the threshold, then applies
+the refined cameras, re-triangulates ALL points in the worker and recomputes errors
+(so the report is on all observations, never just the kept subset). The threshold is
+floored at the 80th percentile of the current per-point errors so a round never
+rejects more than ~20 % of points — an early version rejected per observation with
+no floor, kept 20 % of the data and made the 18-camera fit worse. `state.sbaResult.rounds`
+records each round; the before/after table (`#reprojStatsTable`) compares initial and
+refined per-camera stats. The solver's own `outlier_threshold` is left at 0.
+
+### What "good" looks like on real data
+
+On the 18-camera / 1800-frame HEVC session (`/root/vast/eric/calibration_test`, transcoded
+to H.264 for headless tests), the anipose `calibration.toml` shipped with it scores a
+**10.8 px median** cross-view reprojection error on our detections, and per-frame errors
+swing 4–47 px with board motion — the data (frame sync / motion) limits consistency,
+not the solver. Our initial extrinsics score 12.7 px median with camera-pair distances
+within ~10 mm of anipose's. Judge SBA changes by "median on all observations vs the
+reference on the same detections" (`tests/e2e/real-session.mjs` prints it), not by
+absolute pixel numbers.
 
 ### Board convention
 
