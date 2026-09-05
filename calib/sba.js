@@ -163,6 +163,45 @@ export function outlierSchedule(start, end, rounds) {
     return out;
 }
 
+/**
+ * anipose's clamp for the rejection threshold (aniposelib get_error_dict + bundle_adjust_iter):
+ * for every camera pair, take the points both cameras see, average the two cameras'
+ * errors per point, and compute the 15th and 75th percentiles. The threshold is clamped
+ * to [max over pairs of p15, max over pairs of p75]: it never drops so low that the worst
+ * pair keeps < 15 % of its points, and never rises above the worst pair's p75.
+ * @param {{frames:object[]}} reproj
+ * @param {number} nViews
+ * @param {{minPoints?:number, maxPointsPerPair?:number}} [opts]
+ * @returns {{minError:number, maxError:number, pairs:number}}
+ */
+export function pairErrorBounds(reproj, nViews, opts = {}) {
+    const minPoints = opts.minPoints ?? 10;
+    const cap = opts.maxPointsPerPair ?? 5000;
+    const acc = new Map();   // "i,j" -> number[]
+    for (const rec of reproj.frames) {
+        const present = [];
+        for (let v = 0; v < nViews; v++) if (rec.views[v]) present.push(v);
+        for (let a = 0; a < present.length; a++) for (let b = a + 1; b < present.length; b++) {
+            const i = present[a], j = present[b], vi = rec.views[i], vj = rec.views[j];
+            const key = `${i},${j}`;
+            let arr = acc.get(key); if (!arr) { arr = []; acc.set(key, arr); }
+            if (arr.length >= cap) continue;
+            for (let k = 0; k < rec.n; k++) {
+                if (vi.mask[k] && vj.mask[k] && Number.isFinite(vi.err[k]) && Number.isFinite(vj.err[k])) arr.push((vi.err[k] + vj.err[k]) / 2);
+            }
+        }
+    }
+    let minError = 0, maxError = 0, pairs = 0;
+    for (const arr of acc.values()) {
+        if (arr.length <= minPoints) continue;
+        arr.sort((x, y) => x - y);
+        const p15 = arr[Math.min(arr.length - 1, Math.floor(arr.length * 0.15))];
+        const p75 = arr[Math.min(arr.length - 1, Math.floor(arr.length * 0.75))];
+        minError = Math.max(minError, p15); maxError = Math.max(maxError, p75); pairs++;
+    }
+    return { minError, maxError, pairs };
+}
+
 /** Default solver config (mirrors the UI defaults). */
 export const DEFAULT_SBA_CONFIG = Object.freeze({
     max_iterations: 100,

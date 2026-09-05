@@ -1,5 +1,5 @@
 import { test, run, assert, approx } from './harness.mjs';
-import { prepareSbaInput, filterSbaInput, evaluateSbaObservations, outlierSchedule, applySbaResults, sbaReferenceIndex } from '../calib/sba.js';
+import { prepareSbaInput, filterSbaInput, evaluateSbaObservations, outlierSchedule, applySbaResults, sbaReferenceIndex, pairErrorBounds } from '../calib/sba.js';
 import { matrixToQuaternion, rodriguesToMatrix, projectPoint } from '../calib/geometry.js';
 
 // Two calibrated cameras, three frames, a handful of points with known errors.
@@ -94,6 +94,18 @@ test('applySbaResults maps solver cameras back to view indices and leaves inputs
     assert.ok(out.intrinsics[0].refinedBySba && out.extrinsics[0].refinedBySba);
     assert.equal(intr[1].K[0][0], 800);
     assert.deepEqual(extr[1].tvec, [-100, 0, 0]);
+});
+
+test('pairErrorBounds: worst-pair p15 / p75 of per-point pair-mean errors', () => {
+    // 20 points seen by both cameras with errors 1..20 in both -> pair means 1..20; p15 -> 3, p75 -> 15 (floor index)
+    const n = 20, ids = Array.from({ length: n }, (_, i) => i), errs = ids.map(i => i + 1);
+    const r = rec(0, ids, errs);
+    const b = pairErrorBounds({ frames: [r] }, 2, { minPoints: 5 });
+    assert.equal(b.pairs, 1);
+    approx(b.minError, errs[Math.floor(n * 0.15)], 1e-6);
+    approx(b.maxError, errs[Math.floor(n * 0.75)], 1e-6);
+    // too few points -> no pair counted
+    assert.equal(pairErrorBounds({ frames: [rec(0, [1, 2], [1, 1])] }, 2).pairs, 0);
 });
 
 run();

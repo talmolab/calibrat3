@@ -11,7 +11,7 @@ import { FrameStrip, errorColormap } from './frame-strip.js';
 import { SwarmPlot, ErrorHistogram, drawLineChart } from './plots.js';
 import { FrameGallery } from './gallery.js';
 import { indexReprojectionByFrame } from '../calib/triangulation.js';
-import { prepareSbaInput, applySbaResults, sbaReferenceIndex, filterSbaInput, outlierSchedule } from '../calib/sba.js';
+import { prepareSbaInput, applySbaResults, sbaReferenceIndex, filterSbaInput, outlierSchedule, pairErrorBounds } from '../calib/sba.js';
 import { percentile, norm3, sub3, rotationAngle } from '../calib/geometry.js';
 import { boardMotionScores, framesAboveMotion, motionSummary } from '../calib/motion.js';
 import { cameraCenter } from '../calib/geometry.js';
@@ -237,8 +237,9 @@ async function computeReprojection(onProgress) {
 export async function runSba() {
     if (!state.reproj) return;
     const refIdx = state.referenceView;
-    const rounds = Math.max(1, intInput('sbaOutlierRounds', 2));
-    const finalThr = numInput('sbaOutlierThreshold', 3);
+    const policy = $('sbaRejectPolicy') ? $('sbaRejectPolicy').value : 'anipose';
+    const rounds = Math.max(1, intInput('sbaOutlierRounds', 6));
+    const finalThr = numInput('sbaOutlierThreshold', 1);
     const startThr = numInput('sbaOutlierStart', 0);
     const maxIters = intInput('sbaMaxIterations', 100);
     const maxPoints = intInput('sbaMaxPoints', 20000);
@@ -266,10 +267,10 @@ export async function runSba() {
         if (!preSba) preSba = { intrinsics: state.intrinsics.slice(), extrinsics: state.extrinsics.slice() };
         const s0 = state.reprojInitialSummary || state.reproj.summary;
         const finite0 = input0.meta.pointErr.filter(Number.isFinite);
-        const start = startThr > 0 ? startThr : Math.max(finalThr * 3, percentile(finite0, 0.95));
+        const start = startThr > 0 ? startThr : (policy === 'anipose' ? 15 : Math.max(finalThr * 3, percentile(finite0, 0.95)));
         const schedule = finalThr > 0 ? outlierSchedule(Math.max(start, finalThr), finalThr, rounds) : [Infinity];
         log(`SBA: ${input0.meta.numCameras} cameras, ${input0.meta.numPoints} points (${input0.meta.numFrames} frames${input0.meta.frameStride > 1 ? `, every ${input0.meta.frameStride}th` : ''}), ${input0.meta.numObservations} observations; ` +
-            `${schedule.length} round(s), point-error thresholds ${schedule.map(t => Number.isFinite(t) ? t.toFixed(1) : 'none').join(' → ')} px, ${baseConfig.robust_loss}(${baseConfig.robust_loss_param}), ref=${state.views[refIdx].name}, ` +
+            `${schedule.length} round(s), rejection policy ${policy}, point-error thresholds ${schedule.map(t => Number.isFinite(t) ? t.toFixed(1) : 'none').join(' → ')} px, ${baseConfig.robust_loss}(${baseConfig.robust_loss_param}), ref=${state.views[refIdx].name}, ` +
             `optimize: ${['extrinsics', 'intrinsics', 'points'].filter((k, i) => [baseConfig.optimize_extrinsics, baseConfig.optimize_intrinsics, baseConfig.optimize_points][i]).join('+')}; ` +
             `initial per-point error median ${percentile(finite0, 0.5).toFixed(2)} px, p95 ${percentile(finite0, 0.95).toFixed(2)} px`);
 
@@ -277,12 +278,12 @@ export async function runSba() {
         // observations gets worse and intrinsics were free, retry with intrinsics fixed.
         // Never accept a result worse than the initial calibration.
         const attempts = [];
-        const a1 = await sbaAttempt(baseConfig, schedule, prep, 0, baseConfig.optimize_intrinsics ? 0.5 : 1);
+        const a1 = await sbaAttempt(baseConfig, schedule, prep, 0, baseConfig.optimize_intrinsics ? 0.5 : 1, policy);
         attempts.push(a1);
         const median = (r) => r.reproj.summary.overall.median;
         if (baseConfig.optimize_intrinsics && median(a1) > s0.overall.median * 0.98) {
             log(`SBA with free intrinsics did not improve the re-triangulated error (${s0.overall.median.toFixed(2)} → ${median(a1).toFixed(2)} px); retrying with intrinsics fixed`, 'warn');
-            attempts.push(await sbaAttempt({ ...baseConfig, optimize_intrinsics: false }, schedule, prep, 0.5, 0.5));
+            attempts.push(await sbaAttempt({ ...baseConfig, optimize_intrinsics: false }, schedule, prep, 0.5, 0.5, policy));
         }
         attempts.sort((a, b) => median(a) - median(b));
         const best = attempts[0];
@@ -344,7 +345,7 @@ export async function runSba() {
  * One SBA attempt: rounds of per-point rejection + solve + re-triangulation, starting
  * from the current state. Returns refined arrays without touching state.
  */
-async function sbaAttempt(config, schedule, prep, progressBase, progressSpan) {
+async function sbaAttempt(config, schedule, prep, progressBase, progressSpan, policy = 'anipose') {
     const cw = controllers.calib;
     const label = `optimize ${['extrinsics', 'intrinsics', 'points'].filter((k, i) => [config.optimize_extrinsics, config.optimize_intrinsics, config.optimize_points][i]).join('+')}`;
     let intr = state.intrinsics, extr = state.extrinsics, reproj = state.reproj;
@@ -358,8 +359,17 @@ async function sbaAttempt(config, schedule, prep, progressBase, progressSpan) {
         const prevIntr = intr, prevExtr = extr, prevReproj = reproj, input0Obs = input.observations;
         const errs = input.meta.pointErr;
         const finite = errs.filter(Number.isFinite);
-        const floor = percentile(finite, 0.8);   // never reject more than ~20 % of points in one round
-        const mu = Math.max(schedule[r], Number.isFinite(floor) ? floor : 0);
+        let mu, clampNote = '';
+        if (policy === 'anipose') {
+            // aniposelib: mu = max(min(max_error, mus[i]), min_error) with per-pair p75 / p15 bounds.
+            const b = pairErrorBounds(reproj, state.views.length);
+            mu = Math.max(Math.min(b.maxError, schedule[r]), b.minError);
+            if (mu !== schedule[r]) clampNote = ` — schedule asked ${schedule[r].toFixed(1)}, clamped to [worst-pair p15 ${b.minError.toFixed(1)}, worst-pair p75 ${b.maxError.toFixed(1)}]`;
+        } else {
+            const floor = percentile(finite, 0.8);   // never reject more than ~20 % of points in one round
+            mu = Math.max(schedule[r], Number.isFinite(floor) ? floor : 0);
+            if (mu > schedule[r]) clampNote = ` — schedule asked ${schedule[r].toFixed(1)}, raised to the 80th percentile so ≤20 % of points are rejected`;
+        }
         lastMu = mu;
         const keepObs = new Uint8Array(input.observations.length);
         for (let i = 0; i < input.observations.length; i++) { const e = errs[input.observations[i].point_idx]; keepObs[i] = (Number.isFinite(e) && e <= mu) ? 1 : 0; }
@@ -402,7 +412,7 @@ async function sbaAttempt(config, schedule, prep, progressBase, progressSpan) {
             const intrTxt = config.optimize_intrinsics && i0 && i1 ? ` | fx ${i0.fx.toFixed(1)}→${i1.fx.toFixed(1)}, cx ${i0.cx.toFixed(1)}→${i1.cx.toFixed(1)}, cy ${i0.cy.toFixed(1)}→${i1.cy.toFixed(1)}, k1 ${i0.k1.toFixed(4)}→${i1.k1.toFixed(4)}` : '';
             log(`    ${v.name.padEnd(10)} moved ${dt.toFixed(2)} mm, rotated ${drot.toFixed(3)}°, ${rejectedPerCam[vi]} obs rejected | median err ${before[vi] ? before[vi].median.toFixed(2) : '–'} → ${after[vi] ? after[vi].median.toFixed(2) : '–'} px (p95 ${before[vi] ? before[vi].p95.toFixed(1) : '–'} → ${after[vi] ? after[vi].p95.toFixed(1) : '–'})${intrTxt}`, 'debug');
         });
-        log(`SBA ${label}, round ${r + 1}/${schedule.length} (threshold ${Number.isFinite(mu) ? mu.toFixed(1) : 'none'} px${mu > schedule[r] ? ` — schedule asked ${schedule[r].toFixed(1)}, raised to the 80th percentile so ≤20 % of points are rejected` : ''}; point-error distribution before: median ${percentile(finite, 0.5).toFixed(2)}, p80 ${percentile(finite, 0.8).toFixed(2)}, p95 ${percentile(finite, 0.95).toFixed(2)} px): fit on ${filtered.points.length}/${errs.length} points / ${filtered.observations.length} obs, ` +
+        log(`SBA ${label}, round ${r + 1}/${schedule.length} (threshold ${Number.isFinite(mu) ? mu.toFixed(1) : 'none'} px${clampNote}; point-error distribution before: median ${percentile(finite, 0.5).toFixed(2)}, p80 ${percentile(finite, 0.8).toFixed(2)}, p95 ${percentile(finite, 0.95).toFixed(2)} px): fit on ${filtered.points.length}/${errs.length} points / ${filtered.observations.length} obs, ` +
             `${result.iterations} iters, cost ${result.initial_cost.toFixed(0)} → ${result.final_cost.toFixed(0)} (${result.status}, fit RMS ≈ ${fitRms.toFixed(2)} px) in ${fmtMs(result.ms)}; ` +
             `re-triangulated all observations: median ${reproj.summary.overall.median.toFixed(2)} px, p95 ${reproj.summary.overall.p95.toFixed(2)} px`, 'info');
     }
