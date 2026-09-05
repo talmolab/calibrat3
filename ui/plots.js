@@ -244,7 +244,7 @@ export class ErrorHistogram {
      */
     constructor(canvas, tooltipEl, opts = {}) {
         this.canvas = canvas; this.ctx = canvas.getContext('2d'); this.tooltip = tooltipEl || null;
-        this.height = opts.height ?? 220; this.bins = opts.bins ?? 48; this.xLabel = opts.xLabel || 'reprojection error (px, log scale)';
+        this.height = opts.height ?? 250; this.bins = opts.bins ?? 48; this.xLabel = opts.xLabel || 'reprojection error (px, log scale)';
         this.series = []; this.thresholds = []; this._binsCache = null;
         new ResizeObserver(() => this.render()).observe(canvas.parentElement || canvas);
         this._bind();
@@ -270,7 +270,10 @@ export class ErrorHistogram {
         const ctx = this.ctx; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
         const all = this.series.flatMap(sr => sr.sorted.length ? [sr.sorted[0], sr.sorted[sr.sorted.length - 1]] : []);
         if (!all.length) { ctx.fillStyle = '#666'; ctx.font = '13px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText('No data', W / 2, H / 2); this._binsCache = null; return; }
-        const pad = { left: 52, right: 16, top: 24, bottom: 40 };
+        // Legend rows go BELOW the x-axis label so they never overlap the bars.
+        ctx.font = '11px system-ui, sans-serif';
+        const legendRows = this._legendRows(ctx, W - 68);
+        const pad = { left: 52, right: 16, top: 14, bottom: 40 + legendRows * 15 };
         const pw = W - pad.left - pad.right, ph = H - pad.top - pad.bottom;
         const lo = Math.max(0.01, Math.min(...all) * 0.8), hi = Math.max(...all) * 1.2;
         const llo = Math.log10(lo), lhi = Math.log10(hi);
@@ -291,7 +294,7 @@ export class ErrorHistogram {
         for (const f of [0.25, 0.5, 0.75, 1].map(k => k * ymax / 1.08)) { const yy = y(f); ctx.beginPath(); ctx.moveTo(pad.left, yy); ctx.lineTo(W - pad.right, yy); ctx.stroke(); ctx.fillText(`${(f * 100).toFixed(0)}%`, pad.left - 6, yy + 4); }
         ctx.textAlign = 'center';
         for (let e = Math.floor(llo); e <= Math.ceil(lhi); e++) for (const m of [1, 2, 5]) { const v = m * 10 ** e; if (v < lo || v > hi) continue; const xx = x(v); ctx.strokeStyle = m === 1 ? '#3a3a3a' : '#262626'; ctx.beginPath(); ctx.moveTo(xx, pad.top); ctx.lineTo(xx, pad.top + ph); ctx.stroke(); ctx.fillStyle = '#888'; ctx.fillText(v < 1 ? v.toFixed(v < 0.1 ? 2 : 1) : String(v), xx, H - pad.bottom + 16); }
-        ctx.fillStyle = '#aaa'; ctx.font = '12px system-ui, sans-serif'; ctx.fillText(this.xLabel, pad.left + pw / 2, H - 6);
+        ctx.fillStyle = '#aaa'; ctx.font = '12px system-ui, sans-serif'; ctx.fillText(this.xLabel, pad.left + pw / 2, pad.top + ph + 32);
         // series
         this.series.forEach((sr, si) => {
             const h = hists[si];
@@ -303,17 +306,30 @@ export class ErrorHistogram {
             if (Number.isFinite(sr.median)) { ctx.setLineDash([4, 3]); ctx.beginPath(); ctx.moveTo(x(sr.median), pad.top); ctx.lineTo(x(sr.median), pad.top + ph); ctx.stroke(); ctx.setLineDash([]); }
         });
         for (const t of this.thresholds) { const xx = x(t.x); ctx.strokeStyle = 'rgba(255,107,107,0.8)'; ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(xx, pad.top); ctx.lineTo(xx, pad.top + ph); ctx.stroke(); ctx.setLineDash([]); ctx.fillStyle = '#ff9b9b'; ctx.font = '10px monospace'; ctx.textAlign = 'left'; ctx.fillText(t.label, xx + 3, pad.top + ph - 4); }
-        // legend
+        // legend (below the axis label)
         ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'left';
-        let lx = pad.left + 8, ly = pad.top + 4;
+        let lx = pad.left + 8, ly = pad.top + ph + 40;
         for (const sr of this.series) {
-            const txt = `${sr.label}: median ${sr.median.toFixed(2)}, p95 ${sr.p95.toFixed(1)} px (n=${sr.sorted.length})`;
+            const txt = this._legendText(sr);
             const w = ctx.measureText(txt).width + 22;
-            if (lx + w > W - pad.right) { lx = pad.left + 8; ly += 15; }
+            if (lx + w > W - pad.right && lx > pad.left + 8) { lx = pad.left + 8; ly += 15; }
             ctx.fillStyle = sr.color; ctx.fillRect(lx, ly + 2, 12, 8); ctx.fillStyle = '#ddd'; ctx.fillText(txt, lx + 16, ly + 10);
             lx += w + 10;
         }
         if (this.note) { ctx.fillStyle = '#aaa'; ctx.font = '11px monospace'; ctx.textAlign = 'right'; ctx.fillText(this.note, W - pad.right, pad.top - 8); }
+    }
+
+    _legendText(sr) { return `${sr.label}: median ${sr.median.toFixed(2)}, p95 ${sr.p95.toFixed(1)} px (n=${sr.sorted.length})`; }
+
+    /** Number of legend rows needed at the given usable width (font must already be set). */
+    _legendRows(ctx, usable) {
+        let rows = 1, x = 0;
+        for (const sr of this.series) {
+            const w = ctx.measureText(this._legendText(sr)).width + 32;
+            if (x + w > usable && x > 0) { rows++; x = 0; }
+            x += w;
+        }
+        return rows;
     }
 
     _bind() {
