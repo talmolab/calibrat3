@@ -21,6 +21,8 @@ const TARGET = process.env.TARGET || '600';
 const PLAY_SECONDS = parseFloat(process.env.PLAY_SECONDS || '5');
 const REF = process.env.REFERENCE || [path.join(SESSION, 'calibration_reference.toml'), path.join(SESSION, 'calibration.toml')].find(existsSync);
 const ref = REF ? parseCalibrationToml(readFileSync(REF, 'utf8')) : null;
+/** Match a reference camera to one of our view names: exact, else the reference name is a token of ours. */
+const refCam = (name) => ref ? (ref.cameras.find(c => c.name === name) || ref.cameras.find(c => new RegExp(`(^|[-_ ])${c.name}([-_ .]|$)`).test(name))) : null;
 
 const browser = await chromium.launch({ headless: !process.env.HEADFUL });
 const page = await browser.newPage({ viewport: { width: 1700, height: 1050 } });
@@ -85,7 +87,7 @@ try {
     await waitState(() => document.getElementById('computeIntrinsicsBtn').disabled === false && window.__calibrat3.state.intrinsics.length > 0, null, { timeout: 3600000 });
     const intr = await page.evaluate(() => window.__calibrat3.state.intrinsics.map(r => r ? { rms: r.rmsError, used: r.framesUsed, valid: r.framesValid, fx: r.fx, cx: r.cx, cy: r.cy, k1: r.k1 } : null));
     step(`intrinsics in ${((Date.now() - tI) / 1000).toFixed(0)} s: ${intr.map((r, i) => r ? `${info.views[i]} rms=${r.rms.toFixed(2)} fx=${r.fx.toFixed(0)} k1=${r.k1.toFixed(3)} (${r.used}/${r.valid})` : `${info.views[i]} FAILED`).join('; ')}`);
-    if (ref) intr.forEach((r, i) => { const g = ref.cameras.find(c => c.name === info.views[i]); if (r && g) step(`  ${info.views[i]}: fx ${r.fx.toFixed(1)} vs reference ${g.K[0][0].toFixed(1)}, k1 ${r.k1.toFixed(3)} vs ${g.dist[0].toFixed(3)}`); });
+    if (ref) intr.forEach((r, i) => { const g = refCam(info.views[i]); if (r && g) step(`  ${info.views[i]}: fx ${r.fx.toFixed(1)} vs reference ${g.K[0][0].toFixed(1)}, k1 ${r.k1.toFixed(3)} vs ${g.dist[0].toFixed(3)}`); });
 
     // ---- extrinsics -----------------------------------------------------------------
     const tE = Date.now();
@@ -99,7 +101,7 @@ try {
     const compareRef = (label, exts) => {
         if (!ref) return;
         const ours = exts.map(e => e.tvec ? cameraCenter(rodriguesToMatrix(e.rvec), e.tvec) : null);
-        const theirs = info.views.map(n => { const c = ref.cameras.find(x => x.name === n); return c ? cameraCenter(rodriguesToMatrix(c.rvec), c.tvec) : null; });
+        const theirs = info.views.map(n => { const c = refCam(n); return c ? cameraCenter(rodriguesToMatrix(c.rvec), c.tvec) : null; });
         const rel = [];
         for (let i = 0; i < ours.length; i++) for (let j = i + 1; j < ours.length; j++) {
             if (!ours[i] || !ours[j] || !theirs[i] || !theirs[j]) continue;
@@ -113,8 +115,8 @@ try {
     compareRef('initial', ext0.e);
     if (ref) {
         // The decisive comparison: the reference calibration evaluated on OUR detections.
-        const refIntr = info.views.map(n => { const c = ref.cameras.find(x => x.name === n); return c ? { K: c.K, dist: c.dist } : null; });
-        const refExtr = info.views.map(n => { const c = ref.cameras.find(x => x.name === n); return c ? { R: rodriguesToMatrix(c.rvec), tvec: c.tvec } : null; });
+        const refIntr = info.views.map(n => { const c = refCam(n); return c ? { K: c.K, dist: c.dist } : null; });
+        const refExtr = info.views.map(n => { const c = refCam(n); return c ? { R: rodriguesToMatrix(c.rvec), tvec: c.tvec } : null; });
         const rr = await page.evaluate(async ({ refIntr, refExtr }) => {
             const s = window.__calibrat3.state;
             const r = await window.__calibrat3.controllers.calib.request('reprojection', { store: s.detections.toPlain(), intrinsics: refIntr, extrinsics: refExtr, opts: { minCorners: 4, minViews: 2 } });
@@ -136,6 +138,17 @@ try {
 
     const rounds = await page.evaluate(() => window.__calibrat3.state.sbaResult.rounds || []);
     for (const r of rounds) step(`  round ${r.round}: threshold ${r.threshold.toFixed(1)} px, fit ${r.pointsFit}/${r.pointsTotal} pts (${r.obsFit} obs), ${r.iterations} iters ${r.status}, cost ${r.initialCost.toFixed(0)}→${r.finalCost.toFixed(0)} (fit RMS ${r.fitRms.toFixed(2)}), all-points median ${r.medianAll.toFixed(2)} p95 ${r.p95All.toFixed(1)}, ${(r.ms / 1000).toFixed(0)} s`);
+    if (process.env.OUT_TOML) {
+        const { writeFileSync } = await import('node:fs');
+        const toml = await page.evaluate(async () => (await import('./ui/stage-export.js')).buildToml());
+        writeFileSync(process.env.OUT_TOML, toml);
+        step(`wrote ${process.env.OUT_TOML}`);
+        if (process.env.OUT_SESSION) {
+            const json = await page.evaluate(async () => { const { serializeSession } = await import('./import-export/session-save.js'); return JSON.stringify(serializeSession(window.__calibrat3.state)); });
+            writeFileSync(process.env.OUT_SESSION, json);
+            step(`wrote ${process.env.OUT_SESSION} (${(json.length / 1e6).toFixed(1)} MB)`);
+        }
+    }
     if (process.env.SCREENSHOT) { await page.evaluate(() => document.getElementById('stage4').scrollIntoView()); await page.screenshot({ path: process.env.SCREENSHOT }); }
 } catch (e) {
     errors.push(`test: ${e.message}`);

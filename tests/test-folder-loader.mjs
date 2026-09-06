@@ -1,5 +1,5 @@
 import { test, run, assert } from './harness.mjs';
-import { buildSession, VIDEO_EXT } from '../loading/folder-loader.js';
+import { buildSession, VIDEO_EXT, shortenNames } from '../loading/folder-loader.js';
 
 const fakeFile = (text = '', size = 1000) => ({ size, text: async () => text });
 const BOARD = 'board_x = 5\nboard_y = 7\nsquare_length = 30\nmarker_length = 22.5\nmarker_bits = 5\ndict_size = 100\n';
@@ -76,6 +76,20 @@ test('board.toml preference: root > calibration/ > deeper; parse errors become n
 test('VIDEO_EXT', () => {
     for (const ok of ['a.mp4', 'a.MOV', 'a.m4v', 'a.webm']) assert.ok(VIDEO_EXT.test(ok), ok);
     for (const no of ['a.avi', 'a.mp4.txt', 'mp4']) assert.ok(!VIDEO_EXT.test(no), no);
+});
+
+test('shortenNames strips common prefix/suffix at token boundaries', () => {
+    assert.deepEqual(shortenNames(['10072022145420-back-calibration', '10072022145420-backL-calibration', '10072022145420-top-calibration']), ['back', 'backL', 'top']);
+    assert.deepEqual(shortenNames(['cam1', 'cam2']), ['cam1', 'cam2']);            // no shared token
+    assert.deepEqual(shortenNames(['a_left', 'a_right']), ['left', 'right']);
+    assert.deepEqual(shortenNames(['same', 'same']), ['same', 'same']);            // not unique -> unchanged
+    assert.deepEqual(shortenNames(['only']), ['only']);
+});
+
+test('flat layout uses shortened view names and notes it', async () => {
+    const s = await buildSession([{ path: '1007-back-calibration.mp4', file: fakeFile() }, { path: '1007-top-calibration.mp4', file: fakeFile() }]);
+    assert.deepEqual(s.views.map(v => v.name), ['back', 'top']);
+    assert.ok(s.notes.some(n => n.includes('shortened')));
 });
 
 run();
