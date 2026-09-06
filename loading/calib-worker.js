@@ -62,7 +62,8 @@ function whenOpenCVReady(cvObj) {
             import('../calib/sba.js'),
             import('../calib/geometry.js'),
         ]);
-        M = { store, cov, intr, extr, tri, sba, geom };
+        const ba = await import('../calib/bundle-adjust.js');
+        M = { store, cov, intr, extr, tri, sba, geom, ba };
         ready = true;
         post({ type: 'ready' });
         while (queue.length) handle(queue.shift());
@@ -163,6 +164,7 @@ async function runReprojection({ requestId, store: plain, intrinsics, extrinsics
 // ---- bundle adjustment --------------------------------------------------------
 
 async function runSba({ requestId, input, config, chunkIters }) {
+    if (config.engine !== 'wasm') return runSbaJs({ requestId, input, config, chunkIters });
     const sba = await ensureSba();
     const maxIters = Math.max(1, config.max_iterations || 100);
     const chunk = Math.max(1, Math.min(chunkIters || 10, maxIters));
@@ -196,7 +198,29 @@ async function runSba({ requestId, input, config, chunkIters }) {
             detail: { iteration: done, maxIters, cost: r.final_cost, initialCost, rms: rmsNow, status: r.status, costHistory: history, ms: performance.now() - t0 } });
         if (r.status !== 'MaxIterationsReached') break;   // converged (or stopped) inside this chunk
     }
-    const result = { ...last, initial_cost: initialCost, iterations: done, cost_history: history, ms: performance.now() - t0, chunks: Math.ceil(done / chunk), chunkCosts };
-    post({ type: 'progress', requestId, fraction: 1, msg: 'done', detail: { iteration: done, maxIters, cost: result.final_cost, initialCost, status: result.status, costHistory: history, ms: result.ms } });
+    const result = { ...last, initial_cost: initialCost, iterations: done, cost_history: history, ms: performance.now() - t0, chunks: Math.ceil(done / chunk), chunkCosts, engine: 'wasm' };
+    post({ type: 'progress', requestId, fraction: 1, msg: 'done', detail: { iteration: done, maxIters, cost: result.final_cost, initialCost, rms: Math.sqrt(result.final_cost / Math.max(1, result.num_observations_used || total)), status: result.status, costHistory: history, ms: result.ms } });
+    return result;
+}
+
+// JS sparse LM engine (calib/bundle-adjust.js): anipose-style camera model, progress per iteration.
+function runSbaJs({ requestId, input, config, chunkIters }) {
+    const maxIters = Math.max(1, config.max_iterations || 100);
+    const every = Math.max(1, chunkIters || 1);
+    const total = input.observations.length;
+    post({ type: 'progress', requestId, fraction: 0.02, msg: `optimizing ${input.points.length} points / ${total} observations (${config.optimize_intrinsics ? config.intrinsics_model || 'f-k1' : 'intrinsics fixed'})`, detail: { iteration: 0, maxIters } });
+    let initialCost = null;
+    const history = [];
+    const result = M.ba.bundleAdjust(input, config, {
+        onIteration: (it) => {
+            if (initialCost === null) initialCost = it.initialCost ?? null;
+            history.push(it.cost);
+            if (it.iteration % every !== 0 && it.iteration !== maxIters) return;
+            post({ type: 'progress', requestId, fraction: 0.02 + 0.96 * Math.min(1, it.iteration / maxIters),
+                msg: `iteration ${it.iteration}/${maxIters} · cost ${it.cost.toFixed(0)} · fit RMS ≈ ${it.rms.toFixed(2)} px`,
+                detail: { iteration: it.iteration, maxIters, cost: it.cost, initialCost: initialCost ?? it.cost, rms: it.rms, status: it.status, costHistory: history.slice(), ms: it.ms } });
+        },
+    });
+    post({ type: 'progress', requestId, fraction: 1, msg: 'done', detail: { iteration: result.iterations, maxIters, cost: result.final_cost, initialCost: result.initial_cost, rms: Math.sqrt(result.final_cost / Math.max(1, result.num_observations_used)), status: result.status, costHistory: result.cost_history, ms: result.ms } });
     return result;
 }

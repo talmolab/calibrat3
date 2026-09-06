@@ -148,7 +148,12 @@ export function filterSbaInput(input, keep) {
         points: pointMap.map(p => input.points[p].slice()),
         observations,
         point_to_frame: pointMap.map(p => input.point_to_frame[p]),
-        meta: { ...input.meta, pointMap, obsMap, numPoints: pointMap.length, numObservations: observations.length },
+        meta: {
+            ...input.meta, pointMap, obsMap, numPoints: pointMap.length, numObservations: observations.length,
+            // per-point arrays must follow the renumbering (the solver's board term looks up pointIds[p])
+            pointIds: input.meta.pointIds ? pointMap.map(p => input.meta.pointIds[p]) : undefined,
+            pointErr: input.meta.pointErr ? pointMap.map(p => input.meta.pointErr[p]) : undefined,
+        },
     };
 }
 
@@ -205,7 +210,9 @@ export function pairErrorBounds(reproj, nViews, opts = {}) {
 /** Default solver config (mirrors the UI defaults). */
 export const DEFAULT_SBA_CONFIG = Object.freeze({
     max_iterations: 100,
-    robust_loss: 'huber',
+    engine: 'js',
+    intrinsics_model: 'f-k1',
+    robust_loss: 'none',
     robust_loss_param: 1.0,
     outlier_threshold: 30,
     optimize_extrinsics: true,

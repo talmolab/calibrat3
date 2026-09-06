@@ -249,33 +249,70 @@ export async function runSba() {
     const maxIters = intInput('sbaMaxIterations', 100);
     const maxPoints = intInput('sbaMaxPoints', 20000);
     const prep = (reproj, intr, extr) => prepareSbaInput(reproj, intr, extr, { excludedFrames: fitExclusions(), maxPoints });
-    const input0 = prep(state.reproj, state.intrinsics, state.extrinsics);
-    if (input0.points.length < 10) { showError('Not enough triangulated points for bundle adjustment.'); return; }
-    const baseConfig = {
-        max_iterations: maxIters,
-        robust_loss: $('sbaRobustLoss').value,
-        robust_loss_param: numInput('sbaLossParam', 1.0),
-        outlier_threshold: 0,                       // rejection is done here (anipose-style, per point), not inside the solver
-        optimize_extrinsics: $('sbaOptExtrinsics').checked,
-        optimize_intrinsics: $('sbaOptIntrinsics').checked,
-        optimize_points: $('sbaOptPoints').checked,
-        cost_tolerance: numInput('sbaCostTol', 1e-6),
-        parameter_tolerance: numInput('sbaParamTol', 1e-8),
-        gradient_tolerance: numInput('sbaGradTol', 1e-10),
-        reference_camera: sbaReferenceIndex(input0, refIdx),
-    };
+    const intrModel = $('sbaIntrModel') ? $('sbaIntrModel').value : 'f-k1';
+    const engine = intrModel === 'wasm' ? 'wasm' : 'js';
+    const principalMode = $('sbaPrincipal') ? $('sbaPrincipal').value : 'centre';
+    const rigidity = $('sbaBoardRigidity') ? $('sbaBoardRigidity').value : 'anipose';
+    const boardWeight = rigidity === 'off' ? 0 : rigidity === 'strong' ? 1 : 2 / state.board.squareLength;
+    const optIntr = $('sbaOptIntrinsics').checked;
+    // Principal point handling: the anipose-style models keep cx, cy fixed; pin them at the image centre
+    // (what aniposelib does) unless the user asked to keep the per-camera estimate.
+    const resetPrincipal = engine === 'js' && optIntr && principalMode === 'centre' && !['f-c-k1', 'fxfy-c-k1-k2'].includes(intrModel);
+    const sharedFocal = engine === 'js' && optIntr && ['f-k1', 'f-c-k1', 'f-k1-k2'].includes(intrModel);
+    let startPoint = { intr: state.intrinsics, extr: state.extrinsics, reproj: state.reproj };
     setEnabled('runSbaBtn', false);
     setEnabled('computeExtrinsicsBtn', false);
     sbaProgress.show('preparing');
     const t0 = performance.now();
     try {
+        if (resetPrincipal || sharedFocal) {
+            // anipose-style starting point: one focal length (mean of fx, fy) and, unless the model
+            // frees it, the principal point at the image centre. The per-camera k1-only fit on a
+            // planar board leaves both poorly determined (fx/fy several % apart, cx off by ~50 px).
+            const intr = state.intrinsics.map((r, v) => {
+                if (!r) return r;
+                const w = state.views[v].info.width, h = state.views[v].info.height;
+                const cx = resetPrincipal ? (w - 1) / 2 : r.cx, cy = resetPrincipal ? (h - 1) / 2 : r.cy;
+                const f = sharedFocal ? (r.fx + r.fy) / 2 : null;
+                const fx = f ?? r.fx, fy = f ?? r.fy;
+                if (Math.abs(r.cx - cx) < 1e-9 && Math.abs(r.cy - cy) < 1e-9 && Math.abs(r.fx - fx) < 1e-9 && Math.abs(r.fy - fy) < 1e-9) return r;
+                const K = r.K.map(row => row.slice()); K[0][0] = fx; K[1][1] = fy; K[0][2] = cx; K[1][2] = cy;
+                return { ...r, K, fx, fy, cx, cy, principalReset: resetPrincipal, focalShared: sharedFocal };
+            });
+            if (intr.some((r, v) => r !== state.intrinsics[v])) {
+                sbaProgress.set(0.01, 'anipose-style start (f = mean(fx, fy), principal point at centre), re-triangulating');
+                const reproj = await requestReprojection(intr, state.extrinsics);
+                startPoint = { intr, extr: state.extrinsics, reproj };
+                log(`SBA start (anipose-style): ${state.views.map((v, i) => state.intrinsics[i] ? `${v.name} fx/fy ${state.intrinsics[i].fx.toFixed(0)}/${state.intrinsics[i].fy.toFixed(0)} → ${intr[i].fx.toFixed(0)}, c (${state.intrinsics[i].cx.toFixed(0)}, ${state.intrinsics[i].cy.toFixed(0)}) → (${intr[i].cx.toFixed(1)}, ${intr[i].cy.toFixed(1)})` : null).filter(Boolean).join('; ')}; initial median ${state.reproj.summary.overall.median.toFixed(2)} → ${reproj.summary.overall.median.toFixed(2)} px before refinement`);
+            }
+        }
+        const input0 = prep(startPoint.reproj, startPoint.intr, startPoint.extr);
+        if (input0.points.length < 10) throw new Error('Not enough triangulated points for bundle adjustment.');
+        const baseConfig = {
+            engine,
+            intrinsics_model: intrModel === 'wasm' ? 'full' : intrModel,
+            board: state.board,
+            board_weight: engine === 'js' ? boardWeight : 0,
+            max_iterations: maxIters,
+            robust_loss: $('sbaRobustLoss').value,
+            robust_loss_param: numInput('sbaLossParam', 1.0),
+            outlier_threshold: 0,                       // rejection is done here (anipose-style, per point), not inside the solver
+            optimize_extrinsics: $('sbaOptExtrinsics').checked,
+            optimize_intrinsics: optIntr,
+            optimize_points: $('sbaOptPoints').checked,
+            cost_tolerance: numInput('sbaCostTol', 1e-6),
+            parameter_tolerance: numInput('sbaParamTol', 1e-8),
+            gradient_tolerance: numInput('sbaGradTol', 1e-10),
+            reference_camera: sbaReferenceIndex(input0, refIdx),
+        };
         if (!preSba) preSba = { intrinsics: state.intrinsics.slice(), extrinsics: state.extrinsics.slice() };
         const s0 = state.reprojInitialSummary || state.reproj.summary;
         const finite0 = input0.meta.pointErr.filter(Number.isFinite);
         const start = startThr > 0 ? startThr : (policy === 'aggressive' ? 15 : Math.max(finalThr * 3, percentile(finite0, 0.95)));
         const schedule = finalThr > 0 ? outlierSchedule(Math.max(start, finalThr), finalThr, rounds) : [Infinity];
         log(`SBA: ${input0.meta.numCameras} cameras, ${input0.meta.numPoints} points (${input0.meta.numFrames} frames${input0.meta.frameStride > 1 ? `, every ${input0.meta.frameStride}th` : ''}), ${input0.meta.numObservations} observations; ` +
-            `${schedule.length} round(s), rejection policy ${policy}, point-error thresholds ${schedule.map(t => Number.isFinite(t) ? t.toFixed(1) : 'none').join(' → ')} px, ${baseConfig.robust_loss}(${baseConfig.robust_loss_param}), ref=${state.views[refIdx].name}, ` +
+            `${schedule.length} round(s), rejection policy ${policy}, point-error thresholds ${schedule.map(t => Number.isFinite(t) ? t.toFixed(1) : 'none').join(' → ')} px, loss ${baseConfig.robust_loss}(${baseConfig.robust_loss_param}), ref=${state.views[refIdx].name}, ` +
+            `engine ${engine}${engine === 'js' ? ` (intrinsics ${optIntr ? intrModel : 'fixed'}, board rigidity ${boardWeight ? boardWeight.toFixed(3) + ' px/mm' : 'off'})` : ' (sba-solver-wasm, all 9 intrinsics)'}; ` +
             `optimize: ${['extrinsics', 'intrinsics', 'points'].filter((k, i) => [baseConfig.optimize_extrinsics, baseConfig.optimize_intrinsics, baseConfig.optimize_points][i]).join('+')}; ` +
             `initial per-point error median ${percentile(finite0, 0.5).toFixed(2)} px, p95 ${percentile(finite0, 0.95).toFixed(2)} px`);
 
@@ -283,12 +320,12 @@ export async function runSba() {
         // observations gets worse and intrinsics were free, retry with intrinsics fixed.
         // Never accept a result worse than the initial calibration.
         const attempts = [];
-        const a1 = await sbaAttempt(baseConfig, schedule, prep, 0, baseConfig.optimize_intrinsics ? 0.5 : 1, policy);
+        const a1 = await sbaAttempt(baseConfig, schedule, prep, 0, baseConfig.optimize_intrinsics ? 0.5 : 1, policy, startPoint);
         attempts.push(a1);
         const median = (r) => r.reproj.summary.overall.median;
         if (baseConfig.optimize_intrinsics && median(a1) > s0.overall.median * 0.98) {
             log(`SBA with free intrinsics did not improve the re-triangulated error (${s0.overall.median.toFixed(2)} → ${median(a1).toFixed(2)} px); retrying with intrinsics fixed`, 'warn');
-            attempts.push(await sbaAttempt({ ...baseConfig, optimize_intrinsics: false }, schedule, prep, 0.5, 0.5, policy));
+            attempts.push(await sbaAttempt({ ...baseConfig, optimize_intrinsics: false }, schedule, prep, 0.5, 0.5, policy, { intr: state.intrinsics, extr: state.extrinsics, reproj: state.reproj }));
         }
         attempts.sort((a, b) => median(a) - median(b));
         const best = attempts[0];
@@ -350,10 +387,11 @@ export async function runSba() {
  * One SBA attempt: rounds of per-point rejection + solve + re-triangulation, starting
  * from the current state. Returns refined arrays without touching state.
  */
-async function sbaAttempt(config, schedule, prep, progressBase, progressSpan, policy = 'aggressive') {
+async function sbaAttempt(config, schedule, prep, progressBase, progressSpan, policy = 'aggressive', start = null) {
     const cw = controllers.calib;
-    const label = `optimize ${['extrinsics', 'intrinsics', 'points'].filter((k, i) => [config.optimize_extrinsics, config.optimize_intrinsics, config.optimize_points][i]).join('+')}`;
-    let intr = state.intrinsics, extr = state.extrinsics, reproj = state.reproj;
+    const intrLabel = config.optimize_intrinsics ? (config.engine === 'wasm' ? 'intrinsics(all 9)' : `intrinsics(${config.intrinsics_model})`) : null;
+    const label = `optimize ${[config.optimize_extrinsics ? 'extrinsics' : null, intrLabel, config.optimize_points ? 'points' : null].filter(Boolean).join('+')}`;
+    let intr = start ? start.intr : state.intrinsics, extr = start ? start.extr : state.extrinsics, reproj = start ? start.reproj : state.reproj;
     let input = prep(reproj, intr, extr);
     let lastResult = null, lastInput = null, lastMu = Infinity;
     const roundLog = [];
@@ -389,7 +427,7 @@ async function sbaAttempt(config, schedule, prep, progressBase, progressSpan, po
                 if (detail && detail.costHistory) drawLineChart($('sbaChart'), detail.costHistory, { label: `round ${r + 1} cost, live (log)` });
                 if (detail && detail.iteration > lastLoggedIter && detail.cost !== undefined) {
                     lastLoggedIter = detail.iteration;
-                    log(`  ${label}, round ${r + 1}: iteration ${detail.iteration}/${detail.maxIters}, cost ${detail.cost.toFixed(1)} (−${((detail.initialCost - detail.cost) / Math.max(1e-9, detail.initialCost) * 100).toFixed(2)}% so far), fit RMS ≈ ${detail.rms.toFixed(3)} px, ${detail.status}, ${fmtMs(detail.ms)}`, 'debug');
+                    log(`  ${label}, round ${r + 1}: iteration ${detail.iteration}/${detail.maxIters}, cost ${detail.cost.toFixed(1)} (−${((detail.initialCost - detail.cost) / Math.max(1e-9, detail.initialCost) * 100).toFixed(2)}% so far), fit RMS ≈ ${Number.isFinite(detail.rms) ? detail.rms.toFixed(3) : '?'} px, ${detail.status}, ${fmtMs(detail.ms)}`, 'debug');
                 }
             },
         });
@@ -414,7 +452,7 @@ async function sbaAttempt(config, schedule, prep, progressBase, progressSpan, po
             if (!e0 || !e1 || e0.error || e1.error) return;
             const dt = norm3(sub3(e1.tvec, e0.tvec));
             const drot = rotationAngle(e0.R, e1.R) * 180 / Math.PI;
-            const intrTxt = config.optimize_intrinsics && i0 && i1 ? ` | fx ${i0.fx.toFixed(1)}→${i1.fx.toFixed(1)}, cx ${i0.cx.toFixed(1)}→${i1.cx.toFixed(1)}, cy ${i0.cy.toFixed(1)}→${i1.cy.toFixed(1)}, k1 ${i0.k1.toFixed(4)}→${i1.k1.toFixed(4)}` : '';
+            const intrTxt = config.optimize_intrinsics && i0 && i1 ? ` | fx ${i0.fx.toFixed(1)}→${i1.fx.toFixed(1)}, cx ${i0.cx.toFixed(1)}→${i1.cx.toFixed(1)}, cy ${i0.cy.toFixed(1)}→${i1.cy.toFixed(1)}, k1 ${i0.k1.toFixed(4)}→${i1.k1.toFixed(4)}${config.engine === 'wasm' || /k2/.test(config.intrinsics_model || '') ? `, k2 ${i0.k2.toFixed(4)}→${i1.k2.toFixed(4)}` : ''}` : '';
             log(`    ${v.name.padEnd(10)} moved ${dt.toFixed(2)} mm, rotated ${drot.toFixed(3)}°, ${rejectedPerCam[vi]} obs rejected | median err ${before[vi] ? before[vi].median.toFixed(2) : '–'} → ${after[vi] ? after[vi].median.toFixed(2) : '–'} px (p95 ${before[vi] ? before[vi].p95.toFixed(1) : '–'} → ${after[vi] ? after[vi].p95.toFixed(1) : '–'})${intrTxt}`, 'debug');
         });
         log(`SBA ${label}, round ${r + 1}/${schedule.length} (threshold ${Number.isFinite(mu) ? mu.toFixed(1) : 'none'} px${clampNote}; point-error distribution before: median ${percentile(finite, 0.5).toFixed(2)}, p80 ${percentile(finite, 0.8).toFixed(2)}, p95 ${percentile(finite, 0.95).toFixed(2)} px): fit on ${filtered.points.length}/${errs.length} points / ${filtered.observations.length} obs, ` +

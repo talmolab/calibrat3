@@ -108,4 +108,15 @@ test('pairErrorBounds: worst-pair p15 / p75 of per-point pair-mean errors', () =
     assert.equal(pairErrorBounds({ frames: [rec(0, [1, 2], [1, 1])] }, 2).pairs, 0);
 });
 
+test('filterSbaInput renumbers meta.pointIds / pointErr with the kept points', () => {
+    const inp = prepareSbaInput(reproj, intr, extr);
+    const keep = new Uint8Array(inp.observations.length).fill(1);
+    // drop both observations of point 0 (frame 0, id 1) -> point removed, ids shift
+    inp.observations.forEach((o, i) => { if (o.point_idx === 0) keep[i] = 0; });
+    const f = filterSbaInput(inp, keep);
+    assert.deepEqual(Array.from(f.meta.pointIds), [2, 3, 1, 2, 7]);
+    approx(f.meta.pointErr, [0.5, 20, 1, 1, 0.2], 1e-6);
+    assert.deepEqual(f.meta.pointMap, [1, 2, 3, 4, 5]);
+});
+
 run();
