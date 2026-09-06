@@ -87,6 +87,8 @@ try {
     await page.click('#runSbaBtn');
     await waitState(() => window.__calibrat3.state.sbaResult !== null, null, { timeout: 300000 });
     await page.waitForSelector('#runSbaBtn:not([disabled])', { timeout: 300000 });
+    const refreshed = await page.evaluate(() => window.__calibrat3.state.intrinsics.map(r => !!(r && r.perFrameRefreshed)));
+    if (!refreshed.every(Boolean)) throw new Error(`per-frame intrinsic errors not re-evaluated after SBA: ${JSON.stringify(refreshed)}`);
     const s5 = await state();
     step(`sba: ${JSON.stringify(s5.sba)}  reproj after: ${JSON.stringify(s5.reproj)}`);
     if (!(s5.sba.final <= s5.sba.initial)) { const cc = await page.evaluate(() => JSON.stringify(window.__calibrat3.state.sbaResult.result.chunkCosts)); throw new Error(`SBA did not reduce cost: chunks ${cc}`); }

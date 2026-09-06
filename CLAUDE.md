@@ -258,6 +258,8 @@ PR under `pr/<n>/` and posts a sticky comment. Repo settings required: Pages sou
 - `calibrateCameraExtended` cost is superlinear in frames; `Max frames / camera`
   (default 80) picks frames greedily for grid coverage (`calib/frame-selection.js`).
   All valid frames are still evaluated afterwards so exclusion works on the full set.
-- After SBA changes intrinsics, the per-frame *intrinsic* errors shown are still the
-  pre-SBA solvePnP evaluation (only the cross-view reprojection is recomputed).
+- After SBA changes intrinsics, `runSba` re-solves every frame's board pose with the refined
+  K / dist (`reevaluateIntrinsics`, worker request `reprojectFrames`) so the stage-3 plots and
+  the red-X overlay match; a pose solved under the old K drawn with the new K looks several px
+  off. Revert restores the original per-frame arrays.
 - Saved sessions don't include thumbnails; galleries then show frame numbers only.

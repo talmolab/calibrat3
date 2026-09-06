@@ -100,6 +100,7 @@ async function handle(msg) {
         switch (type) {
             case 'ping': result = { ok: true, cvVersion: CV.getBuildInformation ? CV.getBuildInformation().split('\n')[0] : 'unknown' }; break;
             case 'intrinsics': result = runIntrinsics(msg); break;
+            case 'reprojectFrames': result = runReprojectFrames(msg); break;
             case 'extrinsics': result = runExtrinsics(msg); break;
             case 'reprojection': result = await runReprojection(msg); break;
             case 'sba': result = await runSba(msg); break;
@@ -117,6 +118,12 @@ function runIntrinsics({ requestId, samples, imageSize, board, opts }) {
     const progress = progressFn(requestId);
     const o = { ...(opts || {}), exclusions: new Set(opts?.exclusions || []), onProgress: progress };
     return M.intr.computeIntrinsicsForCamera(CV, samples, imageSize, board, o);
+}
+
+/** Re-solve every sample's board pose with FIXED intrinsics (after bundle adjustment changed K / dist). */
+function runReprojectFrames({ requestId, K, dist, samples, board }) {
+    const progress = progressFn(requestId);
+    return M.intr.reprojectFrames(CV, K, dist, samples, board, progress);
 }
 
 // ---- extrinsics -------------------------------------------------------------

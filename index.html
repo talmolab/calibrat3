@@ -192,7 +192,7 @@
                             <div class="config-item"><label title="Frames used by calibrateCamera per camera; chosen greedily for image coverage. 0 = use all valid frames.">Max frames / camera</label><input type="number" id="maxCalibFrames" value="50" min="0" step="10"></div>
                             <div class="config-item"><label title="Radial/tangential distortion terms to fit. Fewer terms generalize better across cameras: on an 18-camera rig the k1-only model (what anipose uses) gave the lowest cross-view error even though its per-camera RMS is higher. Use richer models only for strongly distorting lenses with boards covering the whole image.">Distortion model</label>
                                 <select id="distModel">
-                                    <option value="k1" selected>k1 only (anipose-style)</option>
+                                    <option value="k1" selected>k1 only</option>
                                     <option value="k1k2">k1, k2</option>
                                     <option value="k1k2k3">k1, k2, k3</option>
                                     <option value="full">full: k1, k2, k3, p1, p2</option>
@@ -267,11 +267,11 @@
                     </div>
 
                     <div class="config-panel" id="sbaPanel" style="display:none">
-                        <h3>Bundle adjustment <span class="muted small">(sparse Levenberg–Marquardt, anipose-style camera model)</span></h3>
+                        <h3>Bundle adjustment <span class="muted small">(sparse Levenberg–Marquardt with board-rigidity term)</span></h3>
                         <div class="config-row">
                             <div class="config-item"><label>Max iterations</label><input type="number" id="sbaMaxIterations" value="100" min="1" max="2000"></div>
                             <div class="config-item"><label title="The solver runs in chunks of this many iterations so the progress bar, cost chart and log update live. Smaller = more frequent updates, slightly slower (damping restarts per chunk).">Report every</label><input type="number" id="sbaChunkIters" value="10" min="1" max="200" style="width:60px"> <span class="muted small">iterations</span></div>
-                            <div class="config-item"><label title="aniposelib uses a plain least-squares loss and relies on the rejection rounds instead; Huber/Cauchy down-weight large residuals inside the solver.">Robust loss</label><select id="sbaRobustLoss"><option value="none" selected>None (anipose)</option><option value="huber">Huber</option><option value="cauchy">Cauchy</option></select></div>
+                            <div class="config-item"><label title="aniposelib uses a plain least-squares loss and relies on the rejection rounds instead; Huber/Cauchy down-weight large residuals inside the solver.">Robust loss</label><select id="sbaRobustLoss"><option value="none" selected>None (least squares)</option><option value="huber">Huber</option><option value="cauchy">Cauchy</option></select></div>
                             <div class="config-item"><label>Loss param</label><input type="number" id="sbaLossParam" value="1.0" min="0.01" step="0.1"></div>
                             <div class="config-item"><label title="How the per-round rejection threshold is clamped. aggressive (same scheme as aniposelib's bundle_adjust_iter): thresholds 15 px → 1 px, clamped between the worst camera pair's 15th and 75th percentile point error — can reject most points of a pair. conservative: threshold never below the 80th percentile of all point errors, so a round rejects at most ~20 %.">Rejection</label>
                                 <select id="sbaRejectPolicy"><option value="aggressive" selected>aggressive (15 → 1 px, per-pair clamp)</option><option value="conservative">conservative (≤ 20 % per round)</option></select></div>
@@ -280,11 +280,11 @@
                             <div class="config-item"><label title="Threshold for the first round; 0 = automatic (aggressive: 15 px; conservative: 95th percentile of the initial errors).">Start threshold (px, 0=auto)</label><input type="number" id="sbaOutlierStart" value="0" min="0" step="1"></div>
                             <div class="config-item"><label title="Cap on 3D points sent to the solver (frames are subsampled evenly). 0 = all.">Max points</label><input type="number" id="sbaMaxPoints" value="20000" min="0" step="5000"></div>
                             <div class="config-item"><label title="Which intrinsic parameters the bundle adjustment refines. fx, fy + principal point + k1, k2 gave the lowest cross-view error on every tested rig (multi-view geometry + the board term keep it well conditioned); focal + k1 with the principal point pinned at the image centre is what aniposelib does; the 9-parameter model (sba-solver-wasm engine) also frees k3, p1, p2 and drifts on boards that never reach the image corners.">Intrinsics model</label>
-                                <select id="sbaIntrModel"><option value="fxfy-c-k1-k2" selected>fx, fy + principal point + k1, k2</option><option value="f-k1-k2">focal + k1 + k2</option><option value="f-c-k1">focal + principal point + k1</option><option value="f-k1">focal + k1 (anipose)</option><option value="wasm">all 9 parameters (sba-solver-wasm)</option></select></div>
+                                <select id="sbaIntrModel"><option value="fxfy-c-k1-k2" selected>fx, fy + principal point + k1, k2</option><option value="f-k1-k2">focal + k1 + k2</option><option value="f-c-k1">focal + principal point + k1</option><option value="f-k1">focal + k1</option><option value="wasm">all 9 parameters (sba-solver-wasm)</option></select></div>
                             <div class="config-item"><label title="Where the principal point starts (models without a free principal point keep it there). aniposelib pins it at the image centre; the per-camera estimate from a planar board is often unstable.">Principal point</label>
-                                <select id="sbaPrincipal"><option value="centre" selected>image centre (anipose)</option><option value="keep">per-camera estimate</option></select></div>
+                                <select id="sbaPrincipal"><option value="centre" selected>image centre</option><option value="keep">per-camera estimate</option></select></div>
                             <div class="config-item"><label title="Soft constraint that the 3D corners of each frame form the rigid board (aniposelib: weight 2 / square length, in px per mm). It also pins the metric scale. 'off' re-anchors the scale to the board afterwards instead.">Board rigidity</label>
-                                <select id="sbaBoardRigidity"><option value="anipose" selected>anipose (2 / square)</option><option value="strong">strong (1 px per mm)</option><option value="off">off</option></select></div>
+                                <select id="sbaBoardRigidity"><option value="anipose" selected>default (2 / square length)</option><option value="strong">strong (1 px per mm)</option><option value="off">off</option></select></div>
                         </div>
                         <div class="config-row">
                             <div class="config-item"><label>Optimize</label>
