@@ -147,12 +147,19 @@ async function loadSavedSession(saved) {
     controllers.video.redraw();
 }
 
+/** Toggle exclusion of the current frame for whichever stage is active (extrinsics once a cross-view result exists). */
+function toggleCurrentExclusion() {
+    const kind = state.activeExclusion || (state.reproj ? 'extrinsics' : 'intrinsics');
+    if (kind === 'extrinsics') toggleExtrinsicsExclusion(state.currentFrame);
+    else toggleIntrinsicsExclusion(state.currentFrame);
+}
+
 function setupGlobalKeys() {
+    const btn = document.getElementById('excludeCurrentBtn');
+    if (btn) btn.addEventListener('click', toggleCurrentExclusion);
     registerKeyHandler((e) => {
         if (e.key === 'x' || e.key === 'X') {
-            const kind = state.activeExclusion || (state.reproj ? 'extrinsics' : 'intrinsics');
-            if (kind === 'extrinsics') toggleExtrinsicsExclusion(state.currentFrame);
-            else toggleIntrinsicsExclusion(state.currentFrame);
+            toggleCurrentExclusion();
             return true;
         }
         if (e.key === '{' || e.key === '}') {
