@@ -40,7 +40,7 @@ test('calibration.toml round-trips through the reader', () => {
 test('board.toml from sample_session parses to the default board', async () => {
     const text = await loadText('sample_session/board.toml');
     const { board } = parseBoardToml(text);
-    assert.deepEqual(board, { boardX: 8, boardY: 11, squareLength: 24, markerLength: 18.75, dictName: 'DICT_4X4_1000' });
+    assert.deepEqual(board, { boardX: 8, boardY: 11, squareLength: 24, markerLength: 18.75, dictName: 'DICT_4X4_1000', legacyPattern: false });
 });
 
 test('board.toml writer round trip + comments / strings', () => {
@@ -52,6 +52,17 @@ test('board.toml writer round trip + comments / strings', () => {
     assert.equal(raw.name, 'a # not comment');
     assert.equal(raw.flag, true);
     assert.deepEqual(raw.list, [1, [2, 3], 'x']);
+});
+
+test('board.toml: anipose-style upper-case keys, metre units and legacy_pattern', () => {
+    const { board } = parseBoardToml('board_X = 8\nboard_Y = 8\nsquare_length = 0.125\nmarker_length = 0.0985\nmarker_bits = 4\ndict_size = 1000\nlegacy_pattern = true\n');
+    assert.equal(board.boardX, 8); assert.equal(board.boardY, 8);
+    approx([board.squareLength, board.markerLength], [0.125, 0.0985], 1e-12);
+    assert.equal(board.dictName, 'DICT_4X4_1000');
+    assert.equal(board.legacyPattern, true);
+    const text = generateBoardToml({ ...board });
+    assert.ok(/legacy_pattern = true/.test(text));
+    assert.ok(!/legacy_pattern/.test(generateBoardToml({ ...board, legacyPattern: false })));
 });
 
 run();

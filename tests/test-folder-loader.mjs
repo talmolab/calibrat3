@@ -14,7 +14,7 @@ test('flat layout: {root}/{view}.mp4, sorted by name, board.toml at root', async
     assert.equal(s.layout, 'flat');
     assert.deepEqual(s.views.map(v => v.name), ['back', 'top']);
     assert.equal(s.views[0].path, 'back.MP4');
-    assert.deepEqual(s.board, { boardX: 5, boardY: 7, squareLength: 30, markerLength: 22.5, dictName: 'DICT_5X5_100' });
+    assert.deepEqual(s.board, { boardX: 5, boardY: 7, squareLength: 30, markerLength: 22.5, dictName: 'DICT_5X5_100', legacyPattern: false });
     assert.equal(s.boardPath, 'board.toml');
 });
 

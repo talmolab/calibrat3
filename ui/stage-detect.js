@@ -10,7 +10,7 @@
 
 import { state, controllers, resetDownstreamOfDetection, viewNames, cameraColor } from './app-state.js';
 import { DetectionStore } from '../calib/detection-store.js';
-import { normalizeBoard, numCorners, numMarkers } from '../calib/board.js';
+import { normalizeBoard, numCorners, numMarkers, legacyPatternDiffers } from '../calib/board.js';
 import { stridedFrames } from '../calib/frame-selection.js';
 import { log, fmtMs } from './log-panel.js';
 import { $, el, intInput, numInput, setStageStatus, expandStage, setEnabled, showError, Progress, errorColor } from './stages.js';
@@ -26,7 +26,7 @@ let strip = null, table = null, progress = null;
 
 export function setupDetectStage() {
     progress = new Progress('detectionProgress');
-    for (const id of ['boardX', 'boardY', 'squareLength', 'markerLength', 'arucoDict']) {
+    for (const id of ['boardX', 'boardY', 'squareLength', 'markerLength', 'arucoDict', 'boardPattern']) {
         $(id).addEventListener('change', onBoardFormChanged);
     }
     onBoardFormChanged();
@@ -71,11 +71,15 @@ export function setupDetectStage() {
 
 // ---- board form --------------------------------------------------------------
 
+/** 'auto' | 'new' | 'legacy' as selected; resolvePattern() turns 'auto' into a concrete choice. */
+export function boardPatternChoice() { return $('boardPattern') ? $('boardPattern').value : 'new'; }
+
 export function getBoardFromForm() {
     return normalizeBoard({
         boardX: intInput('boardX', 8), boardY: intInput('boardY', 11),
         squareLength: numInput('squareLength', 24), markerLength: numInput('markerLength', 18.75),
         dictName: $('arucoDict').value,
+        legacyPattern: boardPatternChoice() === 'legacy',
     });
 }
 
@@ -85,8 +89,42 @@ export function setBoardForm(board, sourceLabel = '') {
     if (board.squareLength) $('squareLength').value = board.squareLength;
     if (board.markerLength) $('markerLength').value = board.markerLength;
     if (board.dictName) $('arucoDict').value = board.dictName;
+    if ($('boardPattern') && board.legacyPattern !== undefined) $('boardPattern').value = board.legacyPattern ? 'legacy' : (sourceLabel ? 'new' : $('boardPattern').value);
     $('boardSource').textContent = sourceLabel ? `(from ${sourceLabel})` : '';
     onBoardFormChanged();
+}
+
+/**
+ * Resolve the 'auto' board pattern by detecting the current frame in every view with both
+ * conventions and keeping the one that finds more corners. Only matters for even-row boards.
+ * Sets the select to the winner so batch detection and the exported board.toml are explicit.
+ */
+async function resolvePattern(board) {
+    if (boardPatternChoice() !== 'auto') return board;
+    if (!legacyPatternDiffers(board)) {
+        log(`Board pattern: ${board.boardY} rows (odd) — legacy and current ChArUco layouts are identical, nothing to probe`);
+        $('boardPattern').value = 'new';
+        return normalizeBoard({ ...board, legacyPattern: false });
+    }
+    const pool = controllers.pool;
+    const frame = state.currentFrame;
+    const fast = $('fastDetectCheck').checked;
+    const score = async (legacy) => {
+        const b = normalizeBoard({ ...board, legacyPattern: legacy });
+        await pool.configure(b, { fastMarkers: fast });
+        const rs = await Promise.all(state.views.map(async (view, v) => {
+            const r = await view.decoder.getFrame(frame);
+            if (!r) return null;
+            const copy = await createImageBitmap(r.bitmap);
+            return pool.detect({ frame, view: v, image: copy, width: view.canvas.width, height: view.canvas.height });
+        }));
+        return { corners: rs.reduce((a, r) => a + (r ? r.ids.length : 0), 0), markers: rs.reduce((a, r) => a + (r ? r.numMarkers : 0), 0) };
+    };
+    const cur = await score(false), leg = await score(true);
+    const legacy = leg.corners > cur.corners;
+    $('boardPattern').value = legacy ? 'legacy' : 'new';
+    log(`Board pattern probe on frame ${frame} (${board.boardX}x${board.boardY}, even rows): current layout ${cur.corners} corners / ${cur.markers} markers, legacy (< 4.6) layout ${leg.corners} corners / ${leg.markers} markers → using ${legacy ? 'legacy' : 'current'}${cur.corners === 0 && leg.corners === 0 ? ' (neither found the board on this frame — pick a frame that shows it and detect again)' : ''}`, cur.corners === 0 && leg.corners === 0 ? 'warn' : 'info');
+    return normalizeBoard({ ...board, legacyPattern: legacy });
 }
 
 function onBoardFormChanged() {
@@ -120,10 +158,11 @@ export async function detectCurrentFrame() {
     if (!state.views.length || state.detectionRunning) return;
     const pool = controllers.pool;
     const frame = state.currentFrame;
-    const board = getBoardFromForm();
     const t0 = performance.now();
     try {
         $('detectCurrentResult').textContent = 'detecting…';
+        const board = await resolvePattern(getBoardFromForm());
+        state.board = board;
         await pool.configure(board, { fastMarkers: $('fastDetectCheck').checked });
         const results = await Promise.all(state.views.map(async (view, v) => {
             const r = await view.decoder.getFrame(frame);
@@ -150,7 +189,9 @@ export async function runBatchDetection() {
     const pool = controllers.pool;
     const vc = controllers.video;
     if (state.isPlaying) vc.stopPlayback();
-    const board = getBoardFromForm();
+    let board;
+    try { board = await resolvePattern(getBoardFromForm()); state.board = board; }
+    catch (e) { showError(`Board pattern probe failed: ${e.message}`); return; }
     const { frames, stride } = plannedFrames();
     const nViews = state.views.length;
     const totalJobs = frames.length * nViews;

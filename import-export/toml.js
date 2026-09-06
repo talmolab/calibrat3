@@ -61,13 +61,14 @@ export function generateBoardToml(board) {
         `marker_length = ${formatNumber(board.markerLength)}`,
         `marker_bits = ${d.markerBits}`,
         `dict_size = ${d.dictSize}`,
+        ...(board.legacyPattern ? ['legacy_pattern = true   # OpenCV < 4.6 layout (even-row board starting with a white marker square)'] : []),
         '',
     ].join('\n');
 }
 
 /**
- * Parse board.toml into a board config. Accepts the sleap-anipose keys
- * (board_x, board_y, square_length, marker_length, marker_bits, dict_size);
+ * Parse board.toml into a board config. Accepts the sleap-anipose keys, case-insensitively
+ * (board_x, board_y, square_length, marker_length, marker_bits, dict_size, plus legacy_pattern);
  * unknown keys are kept in `extra`.
  * @returns {{board: object, extra: object}}
  */
@@ -75,20 +76,24 @@ export function parseBoardToml(text) {
     const raw = parseSimpleToml(text);
     const board = {};
     const extra = {};
+    const lower = {};
     for (const [k, v] of Object.entries(raw)) {
-        switch (k) {
+        switch (k.toLowerCase()) {       // accept board_X / Board_Y etc.
             case 'board_x': board.boardX = Number(v); break;
             case 'board_y': board.boardY = Number(v); break;
             case 'square_length': board.squareLength = Number(v); break;
             case 'marker_length': board.markerLength = Number(v); break;
-            case 'marker_bits': case 'dict_size': break;
+            case 'legacy_pattern': board.legacyPattern = v === true || v === 'true' || v === 1; break;
+            case 'marker_bits': lower.marker_bits = v; break;
+            case 'dict_size': lower.dict_size = v; break;
             default: extra[k] = v;
         }
     }
-    if (raw.marker_bits !== undefined && raw.dict_size !== undefined) {
-        const name = dictNameFromToml(Number(raw.marker_bits), Number(raw.dict_size));
+    if (lower.marker_bits !== undefined && lower.dict_size !== undefined) {
+        const name = dictNameFromToml(Number(lower.marker_bits), Number(lower.dict_size));
         if (name) board.dictName = name;
     }
+    if (board.legacyPattern === undefined && Object.keys(board).length) board.legacyPattern = false;
     return { board, extra };
 }
 

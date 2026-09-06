@@ -22,6 +22,7 @@
 importScripts('../lib/opencv/opencv.js');
 
 let CV = null;
+let M = null;            // { board } — the ESM board module (dynamic import works in classic workers)
 let det = null;          // cached detector bundle
 let canvas = null, ctx = null;
 let thumbCanvas = null, thumbCtx = null;
@@ -58,8 +59,8 @@ function whenOpenCVReady(cvObj) {
 
 (async () => {
     try {
-        const { module: m } = await whenOpenCVReady(cv);
-        CV = m;
+        const [{ module: m }, board] = await Promise.all([whenOpenCVReady(cv), import('../calib/board.js')]);
+        CV = m; M = { board };
         ready = true;
         postMessage({ type: 'ready' });
         while (queue.length) handle(queue.shift());
@@ -84,7 +85,7 @@ function handle(msg) {
     }
 }
 
-function boardKey(b) { return `${b.boardX}x${b.boardY}|${b.squareLength}|${b.markerLength}|${b.dictName}`; }
+function boardKey(b) { return `${b.boardX}x${b.boardY}|${b.squareLength}|${b.markerLength}|${b.dictName}${b.legacyPattern ? '|legacy' : ''}`; }
 
 function dispose() {
     if (!det) return;
@@ -104,8 +105,11 @@ function configure(board, options) {
     const dictId = DICT_IDS()[board.dictName];
     if (dictId === undefined) throw new Error(`Unknown dictionary ${board.dictName}`);
     const dictionary = CV.getPredefinedDictionary(dictId);
-    const ids = new CV.Mat();
-    const cvBoard = new CV.aruco_CharucoBoard(new CV.Size(board.boardX, board.boardY), board.squareLength, board.markerLength, dictionary, ids);
+    // Legacy (OpenCV < 4.6) boards are emulated with a one-row-taller board and placeholder ids
+    // in the phantom row; detected corner ids are shifted back in detect(). See calib/board.js.
+    const layout = M.board.detectorLayout(board);
+    const ids = layout.ids ? CV.matFromArray(layout.ids.length, 1, CV.CV_32S, layout.ids) : new CV.Mat();
+    const cvBoard = new CV.aruco_CharucoBoard(new CV.Size(layout.sizeX, layout.sizeY), board.squareLength, board.markerLength, dictionary, ids);
     ids.delete();
     const detectorParams = new CV.aruco_DetectorParameters();
     // Subpixel corner refinement makes a measurable difference for calibration.
@@ -116,7 +120,7 @@ function configure(board, options) {
     const arucoDetector = new CV.aruco_ArucoDetector(dictionary, detectorParams, refineParams);
     const charucoParams = new CV.aruco_CharucoParameters();
     const charucoDetector = new CV.aruco_CharucoDetector(cvBoard, charucoParams, detectorParams, refineParams);
-    det = { key, dictionary, board: cvBoard, detectorParams, refineParams, arucoDetector, charucoParams, charucoDetector };
+    det = { key, dictionary, board: cvBoard, detectorParams, refineParams, arucoDetector, charucoParams, charucoDetector, cornerIdOffset: layout.cornerIdOffset };
     postMessage({ type: 'configured', key });
 }
 
@@ -197,11 +201,16 @@ function detect(msg) {
         if (n > 0) {
             ids = new Int32Array(n);
             corners = new Float32Array(n * 2);
+            let m = 0;
             for (let i = 0; i < n; i++) {
-                ids[i] = ci.intAt(i, 0);
-                corners[i * 2] = cc.floatAt(i, 0);
-                corners[i * 2 + 1] = cc.floatAt(i, 1);
+                const id = ci.intAt(i, 0) - det.cornerIdOffset;   // legacy emulation: drop the phantom corner row
+                if (id < 0) continue;
+                ids[m] = id;
+                corners[m * 2] = cc.floatAt(i, 0);
+                corners[m * 2 + 1] = cc.floatAt(i, 1);
+                m++;
             }
+            if (m < n) { ids = ids.slice(0, m); corners = corners.slice(0, m * 2); }
         }
         cc.delete(); ci.delete();
     }

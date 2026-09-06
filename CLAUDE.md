@@ -187,7 +187,22 @@ intrinsics 123 s, extrinsics 3 s, SBA 46 s.
 
 `calib/board.js` is the single source of truth: corner id → `[(col+1)·s, (row+1)·s, 0]`
 with `col = id % (boardX-1)` (matches OpenCV `CharucoBoard::getChessboardCorners`).
-The vibe's export used `col·s` — inconsistent; fixed here.
+The vibe's export used `col·s` — inconsistent; fixed here. Units are whatever the square
+length is given in (mm or m); every 3D output inherits them.
+
+**Legacy (OpenCV < 4.6) boards.** OpenCV 4.6 flipped the ChArUco marker checkerboard for
+boards with an EVEN number of rows (old boards start with a white marker square top-left,
+new ones with a black square; odd-row boards are unchanged), so a board printed with
+opencv-contrib-python < 4.6 is simply not detected by a >= 4.6 detector of the same size.
+OpenCV.js has no `setLegacyPattern`, so `detectorLayout()` emulates a legacy X x Y board as
+rows 1..Y of a current-pattern X x (Y+1) board: placeholder marker ids from the top of the
+dictionary in the phantom row, real markers keep ids 0..N-1, and `detect-worker.js` shifts
+detected corner ids down by one corner row (`cornerIdOffset = X-1`), dropping the phantom
+row. Verified against cv2's own `setLegacyPattern` board: 49/49 corners, identical ids and
+positions, where the plain detector finds 0. UI: `Board pattern` select — `auto` (default)
+detects the current frame with both layouts before batch detection and keeps the one with
+more corners; `board.toml` gains `legacy_pattern = true` when set. Its keys are parsed
+case-insensitively (`board_X` works).
 
 ## Dependencies (all vendored under `lib/`, each with `PROVENANCE.txt`)
 

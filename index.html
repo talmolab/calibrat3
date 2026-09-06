@@ -119,8 +119,8 @@
                         <div class="config-row">
                             <div class="config-item"><label>Squares X</label><input type="number" id="boardX" value="8" min="3" max="40"></div>
                             <div class="config-item"><label>Squares Y</label><input type="number" id="boardY" value="11" min="3" max="40"></div>
-                            <div class="config-item"><label>Square (mm)</label><input type="number" id="squareLength" value="24" step="0.01" min="0.01"></div>
-                            <div class="config-item"><label>Marker (mm)</label><input type="number" id="markerLength" value="18.75" step="0.01" min="0.01"></div>
+                            <div class="config-item"><label title="Side of one chessboard square, in whatever unit you want the calibration in (mm here, or m as in anipose configs). Every 3D coordinate and translation inherits this unit.">Square (units)</label><input type="number" id="squareLength" value="24" step="any" min="0"></div>
+                            <div class="config-item"><label title="Side of one ArUco marker, same unit as the square.">Marker (units)</label><input type="number" id="markerLength" value="18.75" step="any" min="0"></div>
                             <div class="config-item"><label>Dictionary</label>
                                 <select id="arucoDict">
                                     <option value="DICT_4X4_50">4x4 (50)</option><option value="DICT_4X4_100">4x4 (100)</option>
@@ -131,6 +131,8 @@
                                     <option value="DICT_6X6_250">6x6 (250)</option><option value="DICT_6X6_1000">6x6 (1000)</option>
                                 </select>
                             </div>
+                            <div class="config-item"><label title="OpenCV 4.6 changed the ChArUco layout for boards with an EVEN number of rows: older boards (printed with opencv-contrib-python < 4.6) start with a white marker square in the top-left corner, newer ones with a black square. A board printed with the other convention is not detected. 'auto' tries both on the current frame and keeps the one that finds more corners; odd-row boards are identical in both conventions.">Board pattern</label>
+                                <select id="boardPattern"><option value="auto" selected>auto (probe both)</option><option value="new">OpenCV ≥ 4.6 (top-left black)</option><option value="legacy">legacy &lt; 4.6 (top-left white)</option></select></div>
                             <div class="config-item"><span id="boardInfo" class="muted small"></span></div>
                         </div>
                         <div class="config-row">

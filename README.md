@@ -36,6 +36,10 @@ and pinned dependencies, web workers for anything heavy.
   coverage), per-frame reprojection errors for *every* valid frame, swarm plot,
   worst-frames gallery with lazy thumbnails captured during detection, and
   frame exclusion keyed by video frame (`X`).
+- **Old and new ChArUco layouts:** boards printed with opencv-contrib-python < 4.6
+  (even row counts start with a white marker square) are detected via an emulated legacy
+  layout; *Board pattern: auto* probes both conventions on the current frame. board.toml
+  keys are read case-insensitively and units are free (mm or m).
 - **Extrinsics** from a covisibility graph → BFS pose chain → per-pair relative
   poses (solvePnP both cameras, robust quaternion averaging with outlier
   rejection) → chained absolute poses. Cross-view triangulation (pure-JS DLT on
