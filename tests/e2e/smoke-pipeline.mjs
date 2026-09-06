@@ -69,6 +69,13 @@ try {
     step(`summary: ${JSON.stringify(summary)}`);
     if (summary.framesAllViewsGood < 3) throw new Error('too few frames detected in all views');
 
+    // toolbar exclude button toggles the current frame (intrinsics before a cross-view result exists)
+    const exBefore = await page.evaluate(() => window.__calibrat3.state.exclusions.intrinsics.size);
+    await page.click('#excludeCurrentBtn');
+    const exAfter = await page.evaluate(() => window.__calibrat3.state.exclusions.intrinsics.size);
+    if (exAfter !== exBefore + 1) throw new Error(`exclude button did not exclude the current frame (${exBefore} -> ${exAfter})`);
+    await page.click('#excludeCurrentBtn');
+    if (await page.evaluate(() => window.__calibrat3.state.exclusions.intrinsics.size) !== exBefore) throw new Error('exclude button did not re-include the frame');
     await page.click('#computeIntrinsicsBtn');
     await waitState(() => window.__calibrat3.state.intrinsics.filter(Boolean).length === 4, null, { timeout: 300000 });
     const s3 = await state();
