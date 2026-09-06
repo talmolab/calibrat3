@@ -58,7 +58,13 @@ export function setupVideoPanel() {
  * Open all videos of a session description (from loading/folder-loader.js).
  * @param {{views:Array<{name,source,path}>, board?:object, layout:string, rootName?:string, notes?:string[]}} session
  */
-export async function loadSession(session) {
+export function loadSession(session) {
+    const p = loadSessionImpl(session);
+    state.sessionLoading = p.finally(() => { if (state.sessionLoading === p) state.sessionLoading = null; });
+    return p;
+}
+
+async function loadSessionImpl(session) {
     hideError();
     const vc = controllers.video;
     if (state.isPlaying) vc.stopPlayback();
