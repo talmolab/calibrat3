@@ -3,7 +3,7 @@
 Browser-based multi-camera **ChArUco calibration** GUI. Load synchronized calibration
 videos, detect board corners across thousands of frames, estimate intrinsics and
 extrinsics, refine with bundle adjustment, and export a
-[sleap-anipose](https://github.com/talmolab/sleap-anipose)-compatible `calibration.toml`.
+[Anipose](https://anipose.readthedocs.io/en/latest/index.html)-compatible `calibration.toml`.
 
 **Live:** https://talmolab.github.io/calibrat3/ (deployed from `main`; PRs get previews at `/pr/<n>/`).
 
