@@ -55,7 +55,9 @@ export class SwarmPlot {
         this.grid = null;   // no stale hit-testing if we bail out below
         const nGroups = this.groups.length;
         const bandGuess = (W - 78) / Math.max(1, nGroups);
-        const rotate = bandGuess < 95;           // many cameras: angled, shorter labels
+        ctx.font = 'bold 12px system-ui, sans-serif';
+        const widest = Math.max(0, ...this.groups.map(g => ctx.measureText(`${g.label} (n=${g.points.length})`).width));
+        const rotate = bandGuess < 95 || widest > bandGuess * 0.9;   // many cameras or long names: angled labels
         const pad = { left: 58, right: 20, top: 26, bottom: rotate ? 74 : 42 };
         const pw = W - pad.left - pad.right, ph = H - pad.top - pad.bottom;
         const all = [];

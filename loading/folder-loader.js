@@ -37,7 +37,10 @@ export async function buildSession(entries) {
 
     if (rootVideos.length > 0) {
         layout = 'flat';
-        views = rootVideos.map(e => ({ name: stem(e.path), source: e.file, path: e.path, size: e.file.size }));
+        const stems = rootVideos.map(e => stem(e.path));
+        const short = shortenNames(stems);
+        views = rootVideos.map((e, i) => ({ name: short[i], source: e.file, path: e.path, size: e.file.size }));
+        if (short.some((n, i) => n !== stems[i])) notes.push(`View names shortened from file names (common prefix/suffix removed): ${short.join(', ')}`);
     } else {
         // nested: group by first path segment
         const byCam = new Map();
@@ -148,4 +151,22 @@ export async function loadSampleSession(base = 'sample_session') {
 function stem(p) {
     const base = p.split('/').pop();
     return base.replace(/\.[^.]+$/, '');
+}
+
+/**
+ * Strip the longest common prefix and suffix shared by ALL names, at token boundaries
+ * ("-", "_", ".", " "), so `10072022145420-back-calibration` becomes `back`. Falls back
+ * to the originals if the result would be empty or not unique.
+ */
+export function shortenNames(names) {
+    if (names.length < 2) return names.slice();
+    const sep = /[-_. ]/;
+    const toks = names.map(n => n.split(/([-_. ])/));   // keep separators as tokens
+    let pre = 0;
+    while (toks.every(t => t.length > pre + 1 && t[pre] === toks[0][pre])) pre++;
+    let suf = 0;
+    while (toks.every(t => t.length - suf - 1 > pre && t[t.length - 1 - suf] === toks[0][toks[0].length - 1 - suf])) suf++;
+    const out = toks.map(t => t.slice(pre, t.length - suf).join('').replace(new RegExp(`^${sep.source}+|${sep.source}+$`, 'g'), ''));
+    if (out.some(n => !n) || new Set(out).size !== out.length) return names.slice();
+    return out;
 }
