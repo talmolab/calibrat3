@@ -280,10 +280,10 @@ export async function runSba() {
                 return { ...r, K, fx, fy, cx, cy, principalReset: resetPrincipal, focalShared: sharedFocal };
             });
             if (intr.some((r, v) => r !== state.intrinsics[v])) {
-                sbaProgress.set(0.01, 'anipose-style start (f = mean(fx, fy), principal point at centre), re-triangulating');
+                sbaProgress.set(0.01, 'shared-focal start (f = mean(fx, fy), principal point at centre), re-triangulating');
                 const reproj = await requestReprojection(intr, state.extrinsics);
                 startPoint = { intr, extr: state.extrinsics, reproj };
-                log(`SBA start (anipose-style): ${state.views.map((v, i) => state.intrinsics[i] ? `${v.name} fx/fy ${state.intrinsics[i].fx.toFixed(0)}/${state.intrinsics[i].fy.toFixed(0)} → ${intr[i].fx.toFixed(0)}, c (${state.intrinsics[i].cx.toFixed(0)}, ${state.intrinsics[i].cy.toFixed(0)}) → (${intr[i].cx.toFixed(1)}, ${intr[i].cy.toFixed(1)})` : null).filter(Boolean).join('; ')}; initial median ${state.reproj.summary.overall.median.toFixed(2)} → ${reproj.summary.overall.median.toFixed(2)} px before refinement`);
+                log(`SBA start (shared focal / centred principal point): ${state.views.map((v, i) => state.intrinsics[i] ? `${v.name} fx/fy ${state.intrinsics[i].fx.toFixed(0)}/${state.intrinsics[i].fy.toFixed(0)} → ${intr[i].fx.toFixed(0)}, c (${state.intrinsics[i].cx.toFixed(0)}, ${state.intrinsics[i].cy.toFixed(0)}) → (${intr[i].cx.toFixed(1)}, ${intr[i].cy.toFixed(1)})` : null).filter(Boolean).join('; ')}; initial median ${state.reproj.summary.overall.median.toFixed(2)} → ${reproj.summary.overall.median.toFixed(2)} px before refinement`);
             }
         }
         const input0 = prep(startPoint.reproj, startPoint.intr, startPoint.extr);
