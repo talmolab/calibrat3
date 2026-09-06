@@ -249,7 +249,7 @@ export async function runSba() {
     const maxIters = intInput('sbaMaxIterations', 100);
     const maxPoints = intInput('sbaMaxPoints', 20000);
     const prep = (reproj, intr, extr) => prepareSbaInput(reproj, intr, extr, { excludedFrames: fitExclusions(), maxPoints });
-    const intrModel = $('sbaIntrModel') ? $('sbaIntrModel').value : 'f-k1';
+    const intrModel = $('sbaIntrModel') ? $('sbaIntrModel').value : 'fxfy-c-k1-k2';
     const engine = intrModel === 'wasm' ? 'wasm' : 'js';
     const principalMode = $('sbaPrincipal') ? $('sbaPrincipal').value : 'centre';
     const rigidity = $('sbaBoardRigidity') ? $('sbaBoardRigidity').value : 'anipose';
