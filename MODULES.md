@@ -61,16 +61,32 @@ calibrate → evaluate all valid frames. Imports: board, frame-selection, geomet
 (pose cache per (frame,view), robust quaternion average, per-pair residuals),
 `chainAbsoluteExtrinsics(relPoses, chain, refIdx, n)`. Imports: board, covisibility, geometry.
 
-### calib/triangulation.js  (needs sba wrapper)
+### calib/triangulation.js
 `computeCrossViewReprojection(sba, store, intrinsics, extrinsics, opts)` — per frame,
-ids seen by ≥2 cameras, batched `triangulatePoints`, per-camera reprojection; compact
-typed-array records + summary. `indexReprojectionByFrame`. Imports: geometry.
+ids seen by ≥2 cameras, pure-JS DLT (`triangulateDLT(obs, cams)` on
+`undistortToNormalized` coordinates; the `sba` argument is kept for API compatibility
+and unused — the WASM `triangulate_points` was measured to be off by ~3 mm / 1.5 px on
+exact data), per-camera reprojection; compact typed-array records + summary.
+`indexReprojectionByFrame`. Imports: geometry.
+
+### calib/bundle-adjust.js
+`bundleAdjust(input, config, {onIteration})` — sparse Levenberg–Marquardt bundle
+adjustment in plain JS with the same input/output shapes as the WASM wrapper
+(cameras as `{rotation (quaternion w,x,y,z), translation, focal, principal, distortion}`,
+points, observations, `point_to_frame`, `meta.pointIds`). Camera model per
+`INTRINSIC_MODELS` (`f-k1` = aniposelib default, `f-c-k1`, `f-k1-k2`, `fxfy-c-k1-k2`,
+`fixed`); optional soft board-rigidity term (`board_weight` px per mm, per-frame board
+poses as unknowns, initialised with `fitRigidTransform` = Horn's quaternion method);
+Schur elimination of points then boards, dense Cholesky on the camera block; IRLS
+robust losses; reference camera fixed; metric scale re-anchored to the board when the
+rigidity term is off. Also exports `projectWithJacobian`. Imports: geometry, board.
 
 ### calib/sba.js
 `prepareSbaInput(reproj, intrinsics, extrinsics, {excludedFrames, maxPoints})` (with
 `meta.pointErr` per point), `filterSbaInput(input, keepMask)`, `evaluateSbaObservations`,
 `outlierSchedule(start, end, rounds)`, `sbaReferenceIndex`, `applySbaResults(result,
-input, intrinsics, extrinsics)` → new arrays, `DEFAULT_SBA_CONFIG`. Imports: geometry.
+input, intrinsics, extrinsics)` → new arrays, `pairErrorBounds`, `DEFAULT_SBA_CONFIG`
+(engine `js`, model `f-k1`, loss none). Imports: geometry.
 
 ### calib/initialization.js
 `initApp()` — wires log panel, stages, video panel, loaders (sample / folder / saved

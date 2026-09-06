@@ -29,6 +29,7 @@ import { projectPoint, toWasmCamera, percentile } from './geometry.js';
 export async function computeCrossViewReprojection(sba, store, intrinsics, extrinsics, opts = {}) {
     const minCorners = opts.minCorners ?? 4;
     const minViews = opts.minViews ?? 2;
+    const maxError = opts.maxError ?? 1000;   // px; a point reprojecting further than this is a failed triangulation, not a measurement
     const batchPoints = opts.batchPoints ?? 4000;
     const progress = opts.onProgress || (() => {});
     const frames = opts.frames || store.frames();
@@ -48,6 +49,8 @@ export async function computeCrossViewReprojection(sba, store, intrinsics, extri
         }
     }
     if (activeViews.length < 2) throw new Error('Need at least two calibrated cameras');
+    const wasmCamsJs = activeViews.map(v => cams[v]);   // indexed like wasmIdx
+    void sba;
 
     // Pass 1: gather observations per frame/point.
     const frameRecs = [];
@@ -55,12 +58,13 @@ export async function computeCrossViewReprojection(sba, store, intrinsics, extri
     let batchRefs = [];      // {rec, pointIdx}
     const flush = async () => {
         if (batch.length === 0) return;
-        const res = await sba.triangulatePoints(batch, wasmCams);
-        const failed = new Set(res.failed_indices || []);
+        // Pure-JS DLT (undistort -> normalized coordinates -> nullspace of the 2n x 4 system).
+        // The WASM triangulate_points was found to be inaccurate (≈3 mm / 1.5 px on exact
+        // synthetic data), which put a floor of several px under every cross-view metric.
         for (let i = 0; i < batch.length; i++) {
             const { rec, pointIdx } = batchRefs[i];
-            const p = res.points[i];
-            if (failed.has(i) || !p || !isFinite(p[0])) { rec.xyz[pointIdx * 3] = NaN; rec.xyz[pointIdx * 3 + 1] = NaN; rec.xyz[pointIdx * 3 + 2] = NaN; continue; }
+            const p = triangulateDLT(batch[i], wasmCamsJs);
+            if (!p) { rec.xyz[pointIdx * 3] = NaN; rec.xyz[pointIdx * 3 + 1] = NaN; rec.xyz[pointIdx * 3 + 2] = NaN; continue; }
             rec.xyz[pointIdx * 3] = p[0]; rec.xyz[pointIdx * 3 + 1] = p[1]; rec.xyz[pointIdx * 3 + 2] = p[2];
         }
         batch = []; batchRefs = [];
@@ -104,6 +108,7 @@ export async function computeCrossViewReprojection(sba, store, intrinsics, extri
     // Pass 2: reproject and summarize.
     const perViewErrs = Array.from({ length: nViews }, () => []);
     const allErrs = [];
+    let dropped = 0;
     for (const rec of frameRecs) {
         let sum = 0, cnt = 0, max = 0;
         for (let v = 0; v < nViews; v++) {
@@ -117,6 +122,7 @@ export async function computeCrossViewReprojection(sba, store, intrinsics, extri
                 const [u, w] = projectPoint(X, cams[v]);
                 vr.proj[2 * i] = u; vr.proj[2 * i + 1] = w;
                 const e = Math.hypot(u - vr.det[2 * i], w - vr.det[2 * i + 1]);
+                if (!(e <= maxError)) { vr.err[i] = NaN; vr.mask[i] = 0; vr.count--; dropped++; continue; }
                 vr.err[i] = e;
                 if (isFinite(e)) { vs += e; vc++; if (e > vm) vm = e; perViewErrs[v].push(e); }
             }
@@ -144,6 +150,7 @@ export async function computeCrossViewReprojection(sba, store, intrinsics, extri
         perView: perViewErrs.map(summarize),
         overall: summarize(perViewErrs.flat()),
         frameMeans: summarize(allErrs),
+        dropped,          // observations discarded as failed triangulations (> maxError px)
         ms: performance.now() - t0,
     };
     progress(1, 'done');
@@ -155,4 +162,83 @@ export function indexReprojectionByFrame(reproj) {
     const m = new Map();
     if (reproj) for (const rec of reproj.frames) m.set(rec.frame, rec);
     return m;
+}
+
+/**
+ * Undistort a pixel to normalized camera coordinates (OpenCV undistortPoints iteration,
+ * Brown model [k1, k2, p1, p2, k3]).
+ * @returns {[number, number]}
+ */
+export function undistortToNormalized(u, v, K, dist) {
+    const fx = K[0][0], fy = K[1][1], cx = K[0][2], cy = K[1][2], skew = K[0][1] || 0;
+    const [k1 = 0, k2 = 0, p1 = 0, p2 = 0, k3 = 0] = dist || [];
+    const yd = (v - cy) / fy, xd = (u - cx - skew * yd) / fx;
+    let x = xd, y = yd;
+    if (k1 === 0 && k2 === 0 && p1 === 0 && p2 === 0 && k3 === 0) return [x, y];
+    for (let it = 0; it < 20; it++) {
+        const r2 = x * x + y * y, r4 = r2 * r2;
+        const icdist = 1 / (1 + k1 * r2 + k2 * r4 + k3 * r4 * r2);
+        const dx = 2 * p1 * x * y + p2 * (r2 + 2 * x * x);
+        const dy = p1 * (r2 + 2 * y * y) + 2 * p2 * x * y;
+        const nx = (xd - dx) * icdist, ny = (yd - dy) * icdist;
+        const done = Math.abs(nx - x) < 1e-12 && Math.abs(ny - y) < 1e-12;
+        x = nx; y = ny;
+        if (done) break;
+    }
+    return [x, y];
+}
+
+/** Eigenvector of the smallest eigenvalue of a symmetric 4x4 (Float64Array(16), row-major), by Jacobi rotations. */
+function smallestEigenvector4(N) {
+    const A = Float64Array.from(N), V = Float64Array.of(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+    for (let sweep = 0; sweep < 60; sweep++) {
+        let off = 0;
+        for (let p = 0; p < 4; p++) for (let q = p + 1; q < 4; q++) off += A[p * 4 + q] * A[p * 4 + q];
+        if (off < 1e-30) break;
+        for (let p = 0; p < 4; p++) for (let q = p + 1; q < 4; q++) {
+            const apq = A[p * 4 + q];
+            if (Math.abs(apq) < 1e-300) continue;
+            const theta = (A[q * 4 + q] - A[p * 4 + p]) / (2 * apq);
+            const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+            const c = 1 / Math.sqrt(t * t + 1), sn = t * c;
+            for (let k = 0; k < 4; k++) { const akp = A[k * 4 + p], akq = A[k * 4 + q]; A[k * 4 + p] = c * akp - sn * akq; A[k * 4 + q] = sn * akp + c * akq; }
+            for (let k = 0; k < 4; k++) { const apk = A[p * 4 + k], aqk = A[q * 4 + k]; A[p * 4 + k] = c * apk - sn * aqk; A[q * 4 + k] = sn * apk + c * aqk; }
+            for (let k = 0; k < 4; k++) { const vkp = V[k * 4 + p], vkq = V[k * 4 + q]; V[k * 4 + p] = c * vkp - sn * vkq; V[k * 4 + q] = sn * vkp + c * vkq; }
+        }
+    }
+    let best = 0;
+    for (let i = 1; i < 4; i++) if (A[i * 4 + i] < A[best * 4 + best]) best = i;
+    return [V[best], V[4 + best], V[8 + best], V[12 + best]];
+}
+
+/**
+ * Linear (DLT) triangulation of one point from >= 2 views, as aniposelib does it:
+ * undistort each observation to normalized coordinates, then take the null vector of
+ * the stacked [x P3 - P1; y P3 - P2] rows with P = [R | t].
+ * @param {{camera_idx:number, x:number, y:number}[]} obs
+ * @param {{K:number[][], dist:number[], R:number[][], t:number[]}[]} cams indexed by camera_idx
+ * @returns {number[]|null} [X, Y, Z] in world units, or null if degenerate / behind a camera
+ */
+export function triangulateDLT(obs, cams) {
+    if (!obs || obs.length < 2) return null;
+    const N = new Float64Array(16);
+    for (const o of obs) {
+        const cam = cams[o.camera_idx];
+        if (!cam) continue;
+        const [x, y] = undistortToNormalized(o.x, o.y, cam.K, cam.dist);
+        const R = cam.R, t = cam.t;
+        const r1 = [R[0][0], R[0][1], R[0][2], t[0]], r2 = [R[1][0], R[1][1], R[1][2], t[1]], r3 = [R[2][0], R[2][1], R[2][2], t[2]];
+        const a = [x * r3[0] - r1[0], x * r3[1] - r1[1], x * r3[2] - r1[2], x * r3[3] - r1[3]];
+        const b = [y * r3[0] - r2[0], y * r3[1] - r2[1], y * r3[2] - r2[2], y * r3[3] - r2[3]];
+        for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) N[4 * i + j] += a[i] * a[j] + b[i] * b[j];
+    }
+    const v = smallestEigenvector4(N);
+    if (!(Math.abs(v[3]) > 1e-12)) return null;
+    const X = [v[0] / v[3], v[1] / v[3], v[2] / v[3]];
+    if (!X.every(Number.isFinite)) return null;
+    // Cheirality: the point must be in front of the cameras that observed it.
+    let behind = 0;
+    for (const o of obs) { const c = cams[o.camera_idx]; if (!c) continue; const z = c.R[2][0] * X[0] + c.R[2][1] * X[1] + c.R[2][2] * X[2] + c.t[2]; if (z <= 0) behind++; }
+    if (behind > 0) return null;
+    return X;
 }

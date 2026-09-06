@@ -38,12 +38,18 @@ and pinned dependencies, web workers for anything heavy.
   frame exclusion keyed by video frame (`X`).
 - **Extrinsics** from a covisibility graph → BFS pose chain → per-pair relative
   poses (solvePnP both cameras, robust quaternion averaging with outlier
-  rejection) → chained absolute poses. Cross-view triangulation (WASM DLT) and
-  reprojection with per-frame/per-camera aggregation.
-- **Bundle adjustment** with `@talmolab/sba-solver-wasm` in the worker, with
-  anipose-style iterative outlier rejection (per-point thresholds decreasing over
-  rounds, re-triangulation each round), robust loss, choice of what to optimize,
-  point cap, live iteration progress (chunked solver), a refined-reprojection section
+  rejection) → chained absolute poses. Cross-view triangulation (pure-JS DLT on
+  undistorted normalized coordinates, as aniposelib) and reprojection with
+  per-frame/per-camera aggregation.
+- **Bundle adjustment** with a sparse Levenberg–Marquardt solver written in JS
+  (`calib/bundle-adjust.js`: Schur elimination of points and per-frame board poses,
+  analytic Jacobians) using aniposelib's camera model by default — one focal length
+  + k1 per camera, principal point pinned at the image centre, soft board-rigidity
+  term — with alternative intrinsic models (f + c + k1, f + k1 + k2, fx/fy + c + k1 + k2)
+  and the original `@talmolab/sba-solver-wasm` engine (all 9 intrinsics) selectable.
+  Anipose-style iterative outlier rejection (per-point thresholds decreasing over
+  rounds, re-triangulation each round), optional robust loss, choice of what to optimize,
+  point cap, live iteration progress, a refined-reprojection section
   with an anipose-style error histogram (initial vs refined), before/after per-camera
   table, Best/Worst frame galleries (best shown first), convergence chart, one-click revert.
 - **Export:** `calibration.toml` (sleap-anipose), a full `calibration_data.json`

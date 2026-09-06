@@ -11,8 +11,9 @@ modules served as static files, deployed to GitHub Pages from `main`. Port of th
 
 - `calib/` — pure logic, no DOM. `board`, `geometry`, `detection-store`,
   `covisibility`, `frame-selection` need nothing; `intrinsics`, `extrinsics` take
-  the initialized OpenCV module `cv` as first argument; `triangulation`, `sba`
-  take the sba-solver-wasm wrapper. Runs identically in the worker and in Node tests.
+  the initialized OpenCV module `cv` as first argument; `triangulation` (pure-JS DLT),
+  `bundle-adjust` (pure-JS sparse LM) and `sba` (input/output plumbing shared by both
+  engines) need nothing. Runs identically in the worker and in Node tests.
 - `ui/` — DOM side. `app-state.js` holds THE `state` object + controller singletons;
   `events.js` is a tiny bus; one `stage-*.js` per pipeline stage.
 - `loading/` — video decode (`video.js`), workers (`detect-worker.js`,
@@ -87,43 +88,57 @@ with a sorted `frames: Int32Array` (binary search to look up). Exclusions are
 - `state.reproj`: `{frames:[{frame, n, ids, xyz, views:[{mask, det, proj, err, mean, max, count}|null], meanErr, maxErr}], summary}`;
   `state.reprojByFrame` is its Map index.
 
-### Bundle adjustment with anipose-style outlier rejection (`ui/stage-extrinsics.js` runSba)
+### Bundle adjustment (`ui/stage-extrinsics.js` runSba, `calib/bundle-adjust.js`)
 
-Rounds with a geometric per-POINT error threshold from a start value (default: p95 of
-the initial per-point errors) down to the final value (default 3 px); each round
-fits only points whose mean reprojection error is below the threshold, then applies
-the refined cameras, re-triangulates ALL points in the worker and recomputes errors
-(so the report is on all observations, never just the kept subset). The threshold is
-floored at the 80th percentile of the current per-point errors so a round never
-rejects more than ~20 % of points — an early version rejected per observation with
-no floor, kept 20 % of the data and made the 18-camera fit worse. `state.sbaResult.rounds`
-records each round; the before/after table (`#reprojStatsTable`) compares initial and
-refined per-camera stats. The solver's own `outlier_threshold` is left at 0.
+Two engines share `calib/sba.js` plumbing. The default is the **JS sparse LM**
+(`calib/bundle-adjust.js`): aniposelib's camera model — ONE focal length + k1 per camera,
+principal point pinned at the image centre, plus a soft "the corners of a frame form the
+rigid board" term (weight 2 / square length px per mm, per-frame board poses as unknowns)
+— with Schur elimination of points then boards, analytic Jacobians, IRLS robust losses
+(default none, like anipose) and the reference camera fixed. Before the first round
+`runSba` builds the anipose-style start (`f = mean(fx, fy)`, `cx, cy` = image centre) and
+re-triangulates; the intrinsics model select offers `f-c-k1`, `f-k1-k2`, `fxfy-c-k1-k2`
+too. The sba-solver-wasm engine ("all 9 parameters") is kept for comparison only: it cannot
+fix a subset of intrinsics, so k2/k3 drift to large cancelling values on boards that never
+reach the image corners. Metric scale is re-anchored to the board's corner spacing after
+every solve (reprojection alone cannot observe it). Progress is posted per iteration.
 
-Rejection policy (`Rejection` select): **aggressive** reproduces aniposelib's
-`bundle_adjust_iter` clamp — 6 rounds, thresholds 15 → 1 px (geometric), each round's
-threshold clamped to [max over camera pairs of the 15th percentile, max over pairs of the
-75th percentile] of per-point pair-mean errors (`calib/sba.js` `pairErrorBounds`), and an
-early stop when the median point error < 0.3 px. That is more aggressive than
-**conservative** (threshold never below the global 80th percentile). anipose also fits on
-random subsamples of 200 points per round with a linear loss; we fit on up to the point cap
-with the chosen robust loss and re-triangulate all points every round. On the 18-camera
-session the two policies land close together: aggressive 6.99 px median / 9.34 mean / 25.0 p95
-(the clamp held its threshold at ~10.5 px, fitting ~69 % of points), conservative 7.27 /
-9.06 / 22.3; on the sample session 2.57 vs 2.43 px. aggressive is the default because it is
-the scheme users compare against.
+Outlier rejection is done here, per POINT, anipose-style, not inside the solver: rounds
+with a geometric threshold schedule; each round fits only points whose mean reprojection
+error is below the threshold, applies the refined cameras, re-triangulates ALL points in
+the worker and recomputes errors (so the report is on all observations, never just the
+kept subset). Policies (`Rejection` select): **aggressive** reproduces aniposelib's
+`bundle_adjust_iter` clamp — 6 rounds, thresholds 15 → 1 px, each clamped to [max over
+camera pairs of the 15th percentile, max over pairs of the 75th percentile] of per-point
+pair-mean errors (`pairErrorBounds`); **conservative** never goes below the global 80th
+percentile. Model selection: if the free-intrinsics fit does not improve the re-triangulated
+median, it retries with intrinsics fixed and never returns a worse result than the initial
+calibration. `state.sbaResult.rounds` records each round; the UI keeps the initial
+reprojection plots and adds a "Refined cross-view reprojection" section (strip, swarm,
+error histogram initial vs refined, per-camera table, Best/Worst galleries).
 
-Verbosity: the WASM solver is one blocking call, so `calib-worker.js` runs it in chunks
-of `Report every` iterations (default 10), feeding refined cameras/points back in; each
-chunk posts `{iteration, cost, rms, costHistory}` for the progress bar, a live cost chart
-and a debug-level log line (turn on the log's *verbose* toggle). Chunk restarts of the LM
-damping are harmless (they even escape plateaus); a chunk that ends with a higher cost is
-rejected and the previous state kept. Per round the log lists per camera: translation /
-rotation change, observations rejected, median/p95 before → after, intrinsic changes.
-The UI keeps the initial reprojection plots in the extrinsics section and adds a
-"Refined cross-view reprojection" section under the SBA panel (strip, swarm, error
-histogram (linear bins, overflow bin past the 99th percentile) initial vs refined, per-camera table, Worst/Best frame galleries).
-`state.reprojInitial` holds the full initial result for those plots.
+### Cross-view triangulation is pure JS (`calib/triangulation.js` triangulateDLT)
+
+The WASM `triangulate_points` was measured to be inaccurate — ≈3 mm / 1.5 px median error
+on exact synthetic observations (`tests/test-triangulation.mjs` guards the replacement).
+Every metric, SBA start point and rejection decision used to go through it, which put a
+~4 px floor under everything and hid the real calibration quality. The replacement
+undistorts to normalized coordinates and takes the null vector of the stacked DLT rows
+(same as aniposelib). Observations that reproject > 1000 px are failed triangulations and
+are dropped from the summary (`summary.dropped`).
+
+### Benchmark against aniposelib (cal_test2, 8 cameras, 1280x1024, 2701 frames)
+
+Scored on identical detections with independent code (aniposelib / numpy — never trust
+the app's own numbers alone). aniposelib 0.8.0 on all frames: 0.31 px median on its
+detections, 0.60 px on ours. calibrat3 before today's fixes: 3.8 / 3.9 px. calibrat3 now
+(600 sampled frames, defaults): **0.34 px median / 4.6 p95 on our detections** (per camera
+0.17–0.60, back 0.60 vs anipose's 0.83) and the camera-pair distances agree with anipose's
+to 0.4 mm median / 1.5 mm max; board corner spacing 24.04 mm (true 24.00). Wall clock in
+headless Chromium: detection 72 s, intrinsics 57 s, extrinsics 4 s, SBA 58 s vs aniposelib
+2086 s detection + 408 s calibration. Each fix mattered: JS triangulation alone took the
+initial cross-view median from 5.27 to 1.57 px; the f + k1 solver with the board term and
+the single-focal start took SBA from 4.07 to 0.34 px.
 
 ### Intrinsic model: fewer distortion terms generalize better across cameras
 
@@ -175,7 +190,10 @@ The vibe's export used `col·s` — inconsistent; fixed here.
 - **@talmolab/sba-solver-wasm 0.2.0** (`lib/sba-solver-wasm/`). ESM; `wrapper.js`
   resolves the glue via `import.meta.url`, so keep the four runtime files together.
   Camera rotation is a quaternion `[w,x,y,z]` world→camera. All data crosses into
-  WASM as JSON strings, so cap point counts (`Max points` in the SBA panel).
+  WASM as JSON strings, so cap point counts (`Max points` in the SBA panel). Now only
+  the optional "all 9 intrinsics" SBA engine: its `triangulate_points` is inaccurate
+  (≈3 mm / 1.5 px error on exact synthetic observations — `tests/test-triangulation.mjs`
+  guards the JS replacement) and its intrinsics cannot be partially fixed.
 - **mp4box 0.5.2** (`lib/mp4box/mp4box.all.min.js`), classic script → `MP4Box`, `DataStream`.
   Samples arrive in decode order; `video.js` builds presentation order by sorting
   on `cts` and decodes whole GOPs when B-frames are present.
