@@ -118,6 +118,7 @@ try {
 
     // --- intrinsics exclusion via the gallery ✕ button, then recompute intrinsics
     await page.evaluate(() => document.getElementById('stage3').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })));
+    await page.click('#stage3 .gallery-toggle [data-mode="worst"]');   // galleries show Best first; switch to Worst
     await page.click('#intrinsicsGallery .gallery-card .gallery-x');
     await page.waitForTimeout(200);
     const exIntr = await page.evaluate(() => window.__calibrat3.state.exclusions.intrinsics.size);

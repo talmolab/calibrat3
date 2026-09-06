@@ -45,7 +45,7 @@ and pinned dependencies, web workers for anything heavy.
   rounds, re-triangulation each round), robust loss, choice of what to optimize,
   point cap, live iteration progress (chunked solver), a refined-reprojection section
   with an anipose-style error histogram (initial vs refined), before/after per-camera
-  table, Worst/Best frame galleries, convergence chart, one-click revert.
+  table, Best/Worst frame galleries (best shown first), convergence chart, one-click revert.
 - **Export:** `calibration.toml` (sleap-anipose), a full `calibration_data.json`
   (all observations, triangulated points, per-camera errors), `board.toml`, and a
   **session save** (`*.calibrat3.json`) that restores detections and results

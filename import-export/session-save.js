@@ -12,6 +12,7 @@
  */
 
 import { DetectionStore, b64FromTyped, typedFromB64 } from '../calib/detection-store.js';
+import { shortenNames } from '../loading/folder-loader.js';
 
 export const SESSION_FORMAT_VERSION = 1;
 
@@ -48,7 +49,9 @@ export function validateSession(saved, state) {
     if (saved.version !== SESSION_FORMAT_VERSION) problems.push(`Unsupported session version ${saved.version}`);
     const savedNames = (saved.session?.views || []).map(v => v.name);
     const names = state.views.map(v => v.name);
-    if (savedNames.join('|') !== names.join('|')) problems.push(`View names differ: saved [${savedNames.join(', ')}] vs open [${names.join(', ')}]`);
+    // Accept sessions saved before/after view-name shortening (file stems vs short names).
+    const same = savedNames.join('|') === names.join('|') || shortenNames(savedNames).join('|') === shortenNames(names).join('|');
+    if (!same) problems.push(`View names differ: saved [${savedNames.join(', ')}] vs open [${names.join(', ')}]`);
     saved.session?.views?.forEach((sv, i) => {
         const v = state.views[i];
         if (v && (v.info.width !== sv.width || v.info.height !== sv.height)) problems.push(`${sv.name}: size ${sv.width}x${sv.height} saved vs ${v.info.width}x${v.info.height} open`);

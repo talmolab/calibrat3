@@ -114,6 +114,7 @@ async function openSession(session) {
 /** Restore a saved session: requires the same videos to be open (or opens them via a folder pick). */
 async function loadSavedSession(saved) {
     if (saved.app !== 'calibrat3') throw new Error('not a calibrat3 session file');
+    if (state.sessionLoading) await state.sessionLoading;   // a folder load may still be finishing
     if (state.views.length === 0) {
         log(`Session "${saved.session?.name}" needs its videos: pick the session folder`, 'warn');
         const res = await pickSessionFolder();

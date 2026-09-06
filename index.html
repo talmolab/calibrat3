@@ -216,9 +216,9 @@
                         <div class="strip-wrap"><canvas id="intrinsicsStrip"></canvas><div class="tooltip" id="intrinsicsStripTooltip"></div></div>
                         <div class="plot-wrap"><canvas id="intrinsicsPlot"></canvas><div class="tooltip" id="intrinsicsPlotTooltip"></div></div>
                         <div class="gallery-head"><h3>Frames by intrinsic reprojection error <span class="muted small">(max over cameras · click to seek, ✕ to exclude)</span></h3>
-                            <div class="seg gallery-toggle" data-worst="intrinsicsGallery" data-best="intrinsicsGalleryBest"><button class="seg-btn active" data-mode="worst">Worst frames</button><button class="seg-btn" data-mode="best">Best frames</button></div></div>
-                        <div id="intrinsicsGallery"></div>
-                        <div id="intrinsicsGalleryBest" style="display:none"></div>
+                            <div class="seg gallery-toggle" data-worst="intrinsicsGallery" data-best="intrinsicsGalleryBest"><button class="seg-btn active" data-mode="best">Best frames</button><button class="seg-btn" data-mode="worst">Worst frames</button></div></div>
+                        <div id="intrinsicsGalleryBest"></div>
+                        <div id="intrinsicsGallery" style="display:none"></div>
                     </div>
                 </div>
             </section>
@@ -261,9 +261,9 @@
                         <p class="hint">Error histogram: share of observations per error bin (linear axis; the last bin collects everything beyond it), one curve per camera, dashed = median.</p>
                         <div class="plot-wrap"><canvas id="extrinsicsHist"></canvas><div class="tooltip" id="extrinsicsHistTooltip"></div></div>
                         <div class="gallery-head"><h3>Frames by cross-view error <span class="muted small">(click to seek, ✕ to exclude from extrinsics / SBA)</span></h3>
-                            <div class="seg gallery-toggle" data-worst="extrinsicsGallery" data-best="extrinsicsGalleryBest"><button class="seg-btn active" data-mode="worst">Worst frames</button><button class="seg-btn" data-mode="best">Best frames</button></div></div>
-                        <div id="extrinsicsGallery"></div>
-                        <div id="extrinsicsGalleryBest" style="display:none"></div>
+                            <div class="seg gallery-toggle" data-worst="extrinsicsGallery" data-best="extrinsicsGalleryBest"><button class="seg-btn active" data-mode="best">Best frames</button><button class="seg-btn" data-mode="worst">Worst frames</button></div></div>
+                        <div id="extrinsicsGalleryBest"></div>
+                        <div id="extrinsicsGallery" style="display:none"></div>
                     </div>
 
                     <div class="config-panel" id="sbaPanel" style="display:none">
@@ -316,9 +316,9 @@
                             <tbody id="reprojStatsBody"></tbody>
                         </table></div>
                         <div class="gallery-head"><h3>Frames by refined cross-view error <span class="muted small">(click to seek, ✕ to exclude)</span></h3>
-                            <div class="seg gallery-toggle" data-worst="refinedGallery" data-best="refinedGalleryBest"><button class="seg-btn active" data-mode="worst">Worst frames</button><button class="seg-btn" data-mode="best">Best frames</button></div></div>
-                        <div id="refinedGallery"></div>
-                        <div id="refinedGalleryBest" style="display:none"></div>
+                            <div class="seg gallery-toggle" data-worst="refinedGallery" data-best="refinedGalleryBest"><button class="seg-btn active" data-mode="best">Best frames</button><button class="seg-btn" data-mode="worst">Worst frames</button></div></div>
+                        <div id="refinedGalleryBest"></div>
+                        <div id="refinedGallery" style="display:none"></div>
                     </div>
                 </div>
             </section>
