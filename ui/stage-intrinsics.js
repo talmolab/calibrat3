@@ -167,6 +167,37 @@ export async function computeIntrinsics() {
     controllers.video.redraw();
 }
 
+/**
+ * After bundle adjustment changed K / dist, re-solve every valid frame's board pose with the
+ * refined intrinsics so the per-frame errors, swarm plot, galleries and the red-X overlay
+ * describe the calibration actually in use. Returns a NEW intrinsics array (inputs untouched);
+ * `used` / `counts` / `selectedFrames` (which frames the original fit used) are kept.
+ */
+export async function reevaluateIntrinsics(intrinsics, onProgress) {
+    const store = state.detections;
+    const cw = controllers.calib;
+    if (!store) return intrinsics;
+    const out = intrinsics.slice();
+    const fractions = new Array(intrinsics.length).fill(1);
+    const report = () => onProgress && onProgress(fractions.reduce((a, b) => a + b, 0) / intrinsics.length);
+    await Promise.all(intrinsics.map(async (r, v) => {
+        if (!r || !r.perFrame) return;
+        const frames = Array.from(r.perFrame.frames);
+        const samples = frames.map(f => { const d = store.get(f, v); return { frame: f, ids: d.ids, corners: d.corners }; });
+        fractions[v] = 0; report();
+        const res = await cw.request('reprojectFrames', { K: r.K, dist: r.dist, samples, board: state.board }, { onProgress: (f) => { fractions[v] = f; report(); } });
+        fractions[v] = 1; report();
+        const errors = res.errors instanceof Float32Array ? res.errors : Float32Array.from(res.errors);
+        const rvecs = res.rvecs instanceof Float64Array ? res.rvecs : Float64Array.from(res.rvecs);
+        const tvecs = res.tvecs instanceof Float64Array ? res.tvecs : Float64Array.from(res.tvecs);
+        // RMS over the frames the original fit used, for the summary table
+        let ss = 0, n = 0;
+        for (let i = 0; i < errors.length; i++) if (r.perFrame.used[i] && Number.isFinite(errors[i])) { ss += errors[i] * errors[i]; n++; }
+        out[v] = { ...r, perFrame: { ...r.perFrame, errors, rvecs, tvecs }, rmsError: n ? Math.sqrt(ss / n) : r.rmsError, perFrameRefreshed: true };
+    }));
+    return out;
+}
+
 function medianOf(arr) {
     const a = Array.from(arr).filter(Number.isFinite).sort((x, y) => x - y);
     return a.length ? a[a.length >> 1] : NaN;

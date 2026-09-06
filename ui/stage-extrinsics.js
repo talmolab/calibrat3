@@ -14,6 +14,7 @@ import { indexReprojectionByFrame } from '../calib/triangulation.js';
 import { prepareSbaInput, applySbaResults, sbaReferenceIndex, filterSbaInput, outlierSchedule, pairErrorBounds } from '../calib/sba.js';
 import { percentile, norm3, sub3, rotationAngle } from '../calib/geometry.js';
 import { boardMotionScores, framesAboveMotion, motionSummary } from '../calib/motion.js';
+import { reevaluateIntrinsics, renderResults as renderIntrinsicsResults } from './stage-intrinsics.js';
 import { cameraCenter } from '../calib/geometry.js';
 import { emit, on } from './events.js';
 
@@ -348,9 +349,18 @@ export async function runSba() {
             emit('extrinsics-changed', {});
             return;
         }
-        state.intrinsics = best.intr;
         state.extrinsics = best.extr;
         state.reproj = best.reproj;
+        // Per-frame intrinsic poses were solved under the pre-SBA K / dist; re-solve them so the
+        // stage-3 plots and the red-X overlay match the refined intrinsics.
+        if (best.config.optimize_intrinsics) {
+            sbaProgress.set(0.97, 're-evaluating per-frame intrinsic errors');
+            try { state.intrinsics = await reevaluateIntrinsics(best.intr); }
+            catch (e) { log(`per-frame intrinsic re-evaluation failed: ${e.message}`, 'warn'); state.intrinsics = best.intr; }
+            renderIntrinsicsResults();
+            const rms = (arr) => arr.map((r, i) => r ? `${state.views[i].name} ${(preSba.intrinsics[i] ? preSba.intrinsics[i].rmsError : NaN).toFixed(3)}→${r.rmsError.toFixed(3)}` : null).filter(Boolean).join(', ');
+            log(`Per-frame intrinsic RMS re-evaluated with the refined intrinsics (px): ${rms(state.intrinsics)}`, 'debug');
+        } else state.intrinsics = best.intr;
         state.reprojByFrame = indexReprojectionByFrame(best.reproj);
         const nPts = best.input.points.length, kept = best.lastInput.points.length;
         const lr = best.lastResult;
@@ -469,6 +479,7 @@ export async function revertSba() {
     state.extrinsics = preSba.extrinsics;
     state.sbaResult = null;
     preSba = null;
+    renderIntrinsicsResults();
     $('sbaResult').style.display = 'none';
     $('revertSbaBtn').style.display = 'none';
     log('Reverted to the initial (pre-SBA) calibration');
