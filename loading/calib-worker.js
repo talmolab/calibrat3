@@ -208,7 +208,7 @@ function runSbaJs({ requestId, input, config, chunkIters }) {
     const maxIters = Math.max(1, config.max_iterations || 100);
     const every = Math.max(1, chunkIters || 1);
     const total = input.observations.length;
-    post({ type: 'progress', requestId, fraction: 0.02, msg: `optimizing ${input.points.length} points / ${total} observations (${config.optimize_intrinsics ? config.intrinsics_model || 'f-k1' : 'intrinsics fixed'})`, detail: { iteration: 0, maxIters } });
+    post({ type: 'progress', requestId, fraction: 0.02, msg: `optimizing ${input.points.length} points / ${total} observations (${config.optimize_intrinsics ? config.intrinsics_model || 'fxfy-c-k1-k2' : 'intrinsics fixed'})`, detail: { iteration: 0, maxIters } });
     let initialCost = null;
     const history = [];
     const result = M.ba.bundleAdjust(input, config, {

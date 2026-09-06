@@ -91,17 +91,20 @@ with a sorted `frames: Int32Array` (binary search to look up). Exclusions are
 ### Bundle adjustment (`ui/stage-extrinsics.js` runSba, `calib/bundle-adjust.js`)
 
 Two engines share `calib/sba.js` plumbing. The default is the **JS sparse LM**
-(`calib/bundle-adjust.js`): aniposelib's camera model — ONE focal length + k1 per camera,
-principal point pinned at the image centre, plus a soft "the corners of a frame form the
-rigid board" term (weight 2 / square length px per mm, per-frame board poses as unknowns)
-— with Schur elimination of points then boards, analytic Jacobians, IRLS robust losses
-(default none, like anipose) and the reference camera fixed. Before the first round
-`runSba` builds the anipose-style start (`f = mean(fx, fy)`, `cx, cy` = image centre) and
-re-triangulates; the intrinsics model select offers `f-c-k1`, `f-k1-k2`, `fxfy-c-k1-k2`
-too. The sba-solver-wasm engine ("all 9 parameters") is kept for comparison only: it cannot
-fix a subset of intrinsics, so k2/k3 drift to large cancelling values on boards that never
-reach the image corners. Metric scale is re-anchored to the board's corner spacing after
-every solve (reprojection alone cannot observe it). Progress is posted per iteration.
+(`calib/bundle-adjust.js`): per camera a configurable intrinsic subset plus extrinsics, free
+3D points, and a soft "the corners of a frame form the rigid board" term (weight 2 / square
+length px per mm, per-frame board poses as unknowns — aniposelib's trick, it also pins the
+metric scale) — with Schur elimination of points then boards, analytic Jacobians, IRLS robust
+losses (default none, like anipose) and the reference camera fixed. Intrinsics model
+(`Intrinsics model` select): **`fxfy-c-k1-k2` (default)** — fx, fy, cx, cy, k1, k2 — won on
+every rig tested (see the benchmark below); `f-k1` is aniposelib's model (one focal + k1,
+principal point pinned at the image centre); `f-c-k1`, `f-k1-k2` in between. For the
+shared-focal models `runSba` builds the anipose-style start (`f = mean(fx, fy)`, and unless
+the model frees it `cx, cy` = image centre) and re-triangulates before the first round. The
+sba-solver-wasm engine ("all 9 parameters") is kept for comparison only: it cannot fix a
+subset of intrinsics, so k3/p1/p2 drift on boards that never reach the image corners.
+Metric scale is re-anchored to the board's corner spacing after every solve (reprojection
+alone cannot observe it). Progress is posted per iteration.
 
 Outlier rejection is done here, per POINT, anipose-style, not inside the solver: rounds
 with a geometric threshold schedule; each round fits only points whose mean reprojection
@@ -132,13 +135,24 @@ are dropped from the summary (`summary.dropped`).
 Scored on identical detections with independent code (aniposelib / numpy — never trust
 the app's own numbers alone). aniposelib 0.8.0 on all frames: 0.31 px median on its
 detections, 0.60 px on ours. calibrat3 before today's fixes: 3.8 / 3.9 px. calibrat3 now
-(600 sampled frames, defaults): **0.34 px median / 4.6 p95 on our detections** (per camera
-0.17–0.60, back 0.60 vs anipose's 0.83) and the camera-pair distances agree with anipose's
-to 0.4 mm median / 1.5 mm max; board corner spacing 24.04 mm (true 24.00). Wall clock in
+(600 sampled frames): with aniposelib's f + k1 model **0.34 px median / 4.6 p95 on our
+detections** (back 0.60 vs anipose's 0.83), camera-pair distances within 0.4 mm median of
+anipose's; with the default fx,fy + c + k1 + k2 model **0.10 px / 0.6 p95** (0.42 / 0.9 on
+anipose's independent detections vs anipose's own 0.31 / 5.5); board corner spacing 24.00 mm.
+All 2701 frames instead of 600 (f + k1): 0.28 px, 467 s end to end. Wall clock in
 headless Chromium: detection 72 s, intrinsics 57 s, extrinsics 4 s, SBA 58 s vs aniposelib
 2086 s detection + 408 s calibration. Each fix mattered: JS triangulation alone took the
 initial cross-view median from 5.27 to 1.57 px; the f + k1 solver with the board term and
 the single-focal start took SBA from 4.07 to 0.34 px.
+
+SBA parameter sweep on that session (one factor at a time from the defaults, all on 357 k
+observations): the intrinsics model dominates — f + k1 0.34 px, f + c + k1 0.31, **f + k1 + k2
+0.17 (p95 0.8)**, **fx,fy + c + k1 + k2 0.10 (p95 0.6)**, intrinsics fixed 1.14; the k2 models
+also win on aniposelib's independent detections (0.45 / 0.42 px median, p95 1.0 vs anipose's
+0.31 / 5.5) and keep the board scale to 0.01 %. Everything else is second order: board
+rigidity on/off/strong identical, robust losses trade a lower median for a worse tail, fewer
+rounds worse, reference camera irrelevant, max points 5 k–60 k identical (60 k takes 3x
+longer), the old WASM engine 1.49 px (Huber) or no improvement at all (no loss).
 
 ### Intrinsic model: fewer distortion terms generalize better across cameras
 
@@ -154,23 +168,20 @@ test selects `full` because its ground truth has k2 != 0.
 
 ### What "good" looks like on real data
 
-On the 18-camera / 1800-frame HEVC session (`/root/vast/eric/calibration_test`, transcoded
-to H.264 for headless tests) the anipose `calibration.toml` shipped with it scores a
-**10.8 px median** cross-view reprojection error on our detections. Things established
-experimentally there (see `tests/e2e/real-session.mjs` and the scratch probes in git
-history of this file): integer frame shifts of any camera only make it worse (cameras
-are frame-synchronized); the board never holds still (median 56 px/frame, slowest
-quartile 40 px/frame) so a motion filter cannot help on this recording; SBA with free
-3D points lowers its own cost without lowering the DLT-triangulated error, and freeing
-all 9 intrinsic parameters makes it worse — hence model selection in `runSba`. Judge
-changes by "median over all observations vs the reference on the same detections", not
-by absolute pixel numbers; the per-frame error swings 4–47 px on this data.
-
-Current result on that session (600 sampled frames, defaults: k1-only intrinsics, 2 SBA
-rounds, model selection): initial extrinsics 10.27 px median, after SBA **7.27 px median /
-22.3 px p95** vs the anipose reference's 10.80 / 48.9 on the same detections; camera-pair
-distances within 6 mm (median) of anipose's. Wall clock in headless Chromium (CPU only,
-12 detect workers): detection 600x18 in 200 s, intrinsics 123 s, extrinsics 3 s, SBA 184 s.
+Numbers quoted before 2026-09-06 (anipose reference 10.8 px, ours 7.3 px on the 18-camera
+session) were all measured through the inaccurate WASM triangulation and are void. With the
+JS DLT, on the 18-camera / 1800-frame HEVC session (`/root/vast/eric/calibration_test`,
+H.264 transcode in the scratchpad `calib18/`, 600 sampled frames) the anipose
+`calibration.toml` shipped with it scores **1.36 px median / 5.3 p95** on our detections;
+calibrat3 gives 2.19 px initial, **0.91 px median / 6.2 p95** after SBA with aniposelib's f + k1
+model and **0.21 px / 0.83 p95** with the default fx,fy + c + k1 + k2 model (f + c + k1 0.52,
+f + k1 + k2 0.75, intrinsics fixed 1.22); camera-pair distances within 6 mm (median) of anipose's. This rig is harder than
+cal_test2: the board never holds still (median 56 px/frame) and cameras are frame-synchronised
+(integer frame shifts only hurt), so residual error is dominated by motion blur, not by the
+solver. Judge changes by "median over all observations vs the reference on the same
+detections", scored with independent code where possible (see the benchmark section).
+Wall clock in headless Chromium (CPU only, 12 detect workers): detection 600x18 in 210 s,
+intrinsics 123 s, extrinsics 3 s, SBA 46 s.
 
 ### Board convention
 

@@ -74,7 +74,7 @@ exact data), per-camera reprojection; compact typed-array records + summary.
 adjustment in plain JS with the same input/output shapes as the WASM wrapper
 (cameras as `{rotation (quaternion w,x,y,z), translation, focal, principal, distortion}`,
 points, observations, `point_to_frame`, `meta.pointIds`). Camera model per
-`INTRINSIC_MODELS` (`f-k1` = aniposelib default, `f-c-k1`, `f-k1-k2`, `fxfy-c-k1-k2`,
+`INTRINSIC_MODELS` (`fxfy-c-k1-k2` = UI default, `f-k1` = aniposelib's model, `f-c-k1`, `f-k1-k2`,
 `fixed`); optional soft board-rigidity term (`board_weight` px per mm, per-frame board
 poses as unknowns, initialised with `fitRigidTransform` = Horn's quaternion method);
 Schur elimination of points then boards, dense Cholesky on the camera block; IRLS
@@ -86,7 +86,7 @@ rigidity term is off. Also exports `projectWithJacobian`. Imports: geometry, boa
 `meta.pointErr` per point), `filterSbaInput(input, keepMask)`, `evaluateSbaObservations`,
 `outlierSchedule(start, end, rounds)`, `sbaReferenceIndex`, `applySbaResults(result,
 input, intrinsics, extrinsics)` → new arrays, `pairErrorBounds`, `DEFAULT_SBA_CONFIG`
-(engine `js`, model `f-k1`, loss none). Imports: geometry.
+(engine `js`, model `fxfy-c-k1-k2`, loss none). Imports: geometry.
 
 ### calib/initialization.js
 `initApp()` — wires log panel, stages, video panel, loaders (sample / folder / saved

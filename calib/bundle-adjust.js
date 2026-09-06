@@ -49,7 +49,7 @@ export const DEFAULT_BA_CONFIG = Object.freeze({
     optimize_extrinsics: true,
     optimize_points: true,
     optimize_intrinsics: true,
-    intrinsics_model: 'f-k1',
+    intrinsics_model: 'fxfy-c-k1-k2',   // UI default; 'f-k1' is aniposelib's model
     reference_camera: 0,
     board_weight: 0,             // px per mm for the rigidity term; 0 = off (scale then re-anchored to the board afterwards)
     board: null,                 // board config (calib/board.js) — needed for the rigidity term / re-anchoring
@@ -239,7 +239,7 @@ export function bundleAdjust(input, config = {}, opts = {}) {
     const cfg = { ...DEFAULT_BA_CONFIG, ...config };
     const t0 = (typeof performance !== 'undefined' ? performance : Date).now();
     const now = () => (typeof performance !== 'undefined' ? performance : Date).now();
-    const model = INTRINSIC_MODELS[cfg.optimize_intrinsics ? (cfg.intrinsics_model || 'f-k1') : 'fixed'];
+    const model = INTRINSIC_MODELS[cfg.optimize_intrinsics ? (cfg.intrinsics_model || 'fxfy-c-k1-k2') : 'fixed'];
     if (!model) throw new Error(`unknown intrinsics model ${cfg.intrinsics_model}`);
     const loss = cfg.robust_loss === 'linear' ? 'none' : (cfg.robust_loss || 'none');
     const delta = Math.max(1e-6, cfg.robust_loss_param || 1);

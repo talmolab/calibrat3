@@ -82,6 +82,8 @@ try {
     if (!(s4.reproj.median < 10)) throw new Error('cross-view reprojection too large');
 
     await page.waitForSelector('#runSbaBtn:not([disabled])', { timeout: 60000 });
+    // SBA_MODEL=f-k1|f-c-k1|f-k1-k2|fxfy-c-k1-k2|wasm overrides the intrinsics model select
+    if (process.env.SBA_MODEL) await page.selectOption('#sbaIntrModel', process.env.SBA_MODEL);
     await page.click('#runSbaBtn');
     await waitState(() => window.__calibrat3.state.sbaResult !== null, null, { timeout: 300000 });
     await page.waitForSelector('#runSbaBtn:not([disabled])', { timeout: 300000 });

@@ -43,10 +43,12 @@ and pinned dependencies, web workers for anything heavy.
   per-frame/per-camera aggregation.
 - **Bundle adjustment** with a sparse Levenberg–Marquardt solver written in JS
   (`calib/bundle-adjust.js`: Schur elimination of points and per-frame board poses,
-  analytic Jacobians) using aniposelib's camera model by default — one focal length
-  + k1 per camera, principal point pinned at the image centre, soft board-rigidity
-  term — with alternative intrinsic models (f + c + k1, f + k1 + k2, fx/fy + c + k1 + k2)
-  and the original `@talmolab/sba-solver-wasm` engine (all 9 intrinsics) selectable.
+  analytic Jacobians) with a soft board-rigidity term. Default intrinsics model:
+  fx, fy + principal point + k1 + k2 per camera (lowest cross-view error on every rig
+  tested: 0.10 px on an 8-camera rig, 0.21 px on an 18-camera rig where aniposelib's
+  own calibrations score 0.60 and 1.36 px on the same detections); aniposelib's model
+  (one focal + k1, principal point at the image centre), f + c + k1, f + k1 + k2 and
+  the original `@talmolab/sba-solver-wasm` engine (all 9 intrinsics) are selectable.
   Anipose-style iterative outlier rejection (per-point thresholds decreasing over
   rounds, re-triangulation each round), optional robust loss, choice of what to optimize,
   point cap, live iteration progress, a refined-reprojection section

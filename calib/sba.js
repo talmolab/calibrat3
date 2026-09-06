@@ -211,7 +211,7 @@ export function pairErrorBounds(reproj, nViews, opts = {}) {
 export const DEFAULT_SBA_CONFIG = Object.freeze({
     max_iterations: 100,
     engine: 'js',
-    intrinsics_model: 'f-k1',
+    intrinsics_model: 'fxfy-c-k1-k2',
     robust_loss: 'none',
     robust_loss_param: 1.0,
     outlier_threshold: 30,
