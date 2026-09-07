@@ -12,6 +12,8 @@ calibrat3 is the standalone successor of the `calibration-studio` vibe
 [luc3d](https://github.com/talmolab/luc3d): no build step, vanilla ES modules, vendored
 and pinned dependencies, web workers for anything heavy.
 
+Read the documentation at https://talmolab.github.io/luc3d-docs/#camera-calibration
+
 ## Features
 
 - **Video loading** via WebCodecs + mp4box.js, frame-accurate, with streaming
