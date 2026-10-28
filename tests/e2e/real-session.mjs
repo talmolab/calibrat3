@@ -6,7 +6,7 @@
  * with it (invariant to the choice of world frame).
  *
  *   SESSION=/path/to/session [TARGET=600] [REFERENCE=/path/calibration.toml] \
- *   [PLAY_SECONDS=5] [SCREENSHOT=out.png] node tests/e2e/real-session.mjs
+ *   [PLAY_SECONDS=5] [SCREENSHOT=out.png] [GLARE=off|light|medium|strong|max] node tests/e2e/real-session.mjs
  */
 import { chromium } from 'playwright';
 import { existsSync, readFileSync } from 'node:fs';
@@ -74,6 +74,7 @@ try {
     step(`playback ${PLAY_SECONDS}s: ${play.rendered} frames rendered = ${play.fps.toFixed(1)} fps (video ${play.target} fps); frame gap median ${play.medGap.toFixed(0)} ms, p95 ${play.p95Gap.toFixed(0)} ms, max ${play.maxGap.toFixed(0)} ms`);
 
     // ---- detection ------------------------------------------------------------------
+    if (process.env.GLARE) { await page.selectOption('#glarePreset', process.env.GLARE); step(`glare handling: ${process.env.GLARE} ${await page.textContent('#glareState')}`); }
     await page.fill('#targetSamples', TARGET); await page.dispatchEvent('#targetSamples', 'input');
     const tDet = Date.now();
     await page.click('#runDetectionBtn');

@@ -25,6 +25,12 @@ Exports: `DICT_NAMES`, `DEFAULT_BOARD`, `normalizeBoard`, `boardKey`, `numCorner
 `allCornerObjectPoints`, `boardSize`, `dictNameFromToml`, `tomlFromDictName`.
 Imports: none.
 
+### calib/glare.js
+Detector settings for overexposed boards / glare (plain numbers the detect worker applies).
+Exports: `GLARE_OFF` (= the plain detector), `GLARE_LEVELS` (off, light, medium, strong, max),
+`normalizeGlare`, `glareLevel`, `matchGlareLevel`, `glareKey`, `glareActive`, `describeGlare`.
+Imports: none.
+
 ### calib/geometry.js
 Rotations/poses/projection in pure JS. Exports: `rodriguesToMatrix`, `matrixToRodrigues`,
 `matrixToQuaternion`, `quaternionToMatrix`, `quaternionToRodrigues`, `rodriguesToQuaternion`,
@@ -195,13 +201,14 @@ samples' when the header says 0. Exports: `readSampleTable`, `completeSamples`,
 `trackDurationSec`, `CHUNK_SIZE`. Imports: none.
 
 ### loading/detect-worker.js  (classic worker)
-`importScripts` opencv.js; caches dictionary/board/detectors per board key; `detect`
+`importScripts` opencv.js; caches dictionary/board/detectors per board + glare key; `detect`
 draws the transferred VideoFrame/ImageBitmap to an OffscreenCanvas, runs
-`detectMarkers` + `detectBoard`, optional JPEG thumbnail; replies with transferred
+`detectMarkers` (on a gamma-mapped copy when glare gamma != 1) [+ `refineDetectedMarkers`
+with the board] + `detectBoard`, optional JPEG thumbnail; replies with transferred
 typed arrays.
 
 ### loading/detect-pool.js
-`DetectorPool({size, log})` — `init`, `configure(board)`, `detect({frame, view, image,
+`DetectorPool({size, log})` — `init`, `configure(board, {fastMarkers, glare})`, `detect({frame, view, image,
 width, height, wantThumb})` → Promise, least-loaded dispatch, `stats`, `terminate`.
 
 ### loading/calib-worker.js  (classic worker)

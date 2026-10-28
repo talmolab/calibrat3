@@ -54,10 +54,10 @@ export class DetectorPool {
 
     get totalInFlight() { return this.inFlight.reduce((a, b) => a + b, 0); }
 
-    /** Build detectors for `board` in every worker (cached by config key). */
+    /** Build detectors for `board` in every worker (cached by config key). `options`: {fastMarkers, glare} (see calib/glare.js). */
     async configure(board, options = {}) {
         await this.init();
-        const key = `${board.boardX}x${board.boardY}|${board.squareLength}|${board.markerLength}|${board.dictName}|legacy=${!!board.legacyPattern}|fast=${options.fastMarkers !== false}`;
+        const key = `${board.boardX}x${board.boardY}|${board.squareLength}|${board.markerLength}|${board.dictName}|legacy=${!!board.legacyPattern}|fast=${options.fastMarkers !== false}|glare=${JSON.stringify(options.glare || null)}`;
         if (key === this.boardKey) return;
         await Promise.all(this.workers.map((w) => new Promise((resolve, reject) => {
             const onMsg = (e) => {

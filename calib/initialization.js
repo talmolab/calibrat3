@@ -8,7 +8,7 @@ import { state, controllers } from '../ui/app-state.js';
 import { initLogPanel, log, fmtMs } from '../ui/log-panel.js';
 import { $, setupStageHeaders, showError, setStageStatus, expandStage, setEnabled } from '../ui/stages.js';
 import { setupVideoPanel, loadSession, registerKeyHandler } from '../ui/video-panel.js';
-import { setupDetectStage, setBoardForm, renderResults as renderDetections } from '../ui/stage-detect.js';
+import { setupDetectStage, setBoardForm, setGlareForm, renderResults as renderDetections } from '../ui/stage-detect.js';
 import { setupIntrinsicsStage, toggleIntrinsicsExclusion, stepWorst as stepWorstIntr, renderResults as renderIntrinsics } from '../ui/stage-intrinsics.js';
 import { setupExtrinsicsStage, toggleExtrinsicsExclusion, stepWorst as stepWorstExtr } from '../ui/stage-extrinsics.js';
 import { setupExportStage } from '../ui/stage-export.js';
@@ -126,6 +126,7 @@ async function loadSavedSession(saved) {
     if (!ok) { showError(`Session does not match the open videos: ${problems.join('; ')}`); return; }
     restoreSession(saved, state);
     setBoardForm(state.board, 'saved session');
+    setGlareForm(state.detectionOptions?.glare);   // absent in older sessions -> off
     $('referenceCamera').value = String(state.referenceView);
     log(`Restored session: ${state.detections ? state.detections.size : 0} sampled frames, ${state.intrinsics.filter(Boolean).length} intrinsics, ${state.extrinsics.filter(e => e && !e.error).length} extrinsics` +
         `${state.exclusions.intrinsics.size + state.exclusions.extrinsics.size ? `, ${state.exclusions.intrinsics.size}/${state.exclusions.extrinsics.size} exclusions` : ''}. Thumbnails are not stored; galleries show frame numbers only.`, 'success');

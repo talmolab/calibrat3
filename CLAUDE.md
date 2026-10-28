@@ -204,6 +204,27 @@ detects the current frame with both layouts before batch detection and keeps the
 more corners; `board.toml` gains `legacy_pattern = true` when set. Its keys are parsed
 case-insensitively (`board_X` works).
 
+## Glare / overexposed boards (`calib/glare.js`, stage 2 "Glare handling")
+
+Opt-in, default **off** (= exactly the previous detector). On an overexposed board the white
+marker bits bloom into their black neighbours, OpenCV reads a wrong bit pattern and drops the
+marker, and the corners around it are lost. Ladder (cumulative): **1** `cellMargin` 0.3
+(`perspectiveRemoveIgnoredMarginPerCell`, default 0.13; with 4 px per cell it is truncated to
+whole pixels, so 0.25–0.49 are identical = read the centre 2x2 px of each cell), **2** +
+`refineDetectedMarkers` with the board, **3** + gamma 2 on the marker-search copy only (corners
+stay on the original image), **4** + `CharucoParameters.minMarkers` 1. Measured on the 3-camera
+14x9 DICT_5X5 session 2026-10-20_14-15-10 (all 900 frames, in the app, H.264 transcode):
+overexposed camera 32.9k → 70.6k / 71.6k / 72.7k / 82.6k corners for levels 1–4, frames with
+< 20 corners 243 → 4 → 0 (level 4); the two well-exposed cameras +2 % / +10 %; no frame loses
+corners at levels 1–2 and corners found by both are at identical positions; no new gross
+(> 20 px vs local affine fit of neighbours) outliers at level 1–3, level 4 adds ~0.1 % of its
+extra corners as outliers. Cost: ≤ 2 ms per frame. On the well-exposed sample session levels
+1–2 are neutral, gamma (level 3) loses ~1 % on one camera. Things that did not help: CLAHE /
+equalizeHist on the marker image (−15 %), larger adaptive-threshold windows (+2 % at 2–4x
+the time), adaptiveThreshConstant, errorCorrectionRate, maxErroneousBitsInBorderRate,
+polygonalApproxAccuracyRate, more pixels per cell. The settings are logged with every batch run
+and saved in the session file (`detectionOptions`).
+
 ## Dependencies (all vendored under `lib/`, each with `PROVENANCE.txt`)
 
 - **OpenCV.js 4.13.0** (`lib/opencv/opencv.js`, ~11 MB, single file with embedded

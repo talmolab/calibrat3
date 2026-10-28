@@ -11,6 +11,7 @@
 import { state, controllers, resetDownstreamOfDetection, viewNames, cameraColor } from './app-state.js';
 import { DetectionStore } from '../calib/detection-store.js';
 import { normalizeBoard, numCorners, numMarkers, legacyPatternDiffers } from '../calib/board.js';
+import { glareLevel, matchGlareLevel, normalizeGlare, glareActive, describeGlare } from '../calib/glare.js';
 import { stridedFrames } from '../calib/frame-selection.js';
 import { log, fmtMs } from './log-panel.js';
 import { $, el, intInput, numInput, setStageStatus, expandStage, setEnabled, showError, Progress, errorColor } from './stages.js';
@@ -30,6 +31,11 @@ export function setupDetectStage() {
         $(id).addEventListener('change', onBoardFormChanged);
     }
     onBoardFormChanged();
+    $('glarePreset').addEventListener('change', () => { const p = $('glarePreset').value; if (p !== 'custom') setGlareForm(glareLevel(p)); else updateGlareState(); });
+    for (const id of ['glareCellMargin', 'glareBoardRefine', 'glareGamma', 'glareMinMarkers']) {
+        $(id).addEventListener('change', () => { $('glarePreset').value = matchGlareLevel(getGlareFromForm()); updateGlareState(); });
+    }
+    updateGlareState();
     $('targetSamples').addEventListener('input', updateSamplingInfo);
     $('allFramesCheck').addEventListener('change', updateSamplingInfo);
     $('detectCurrentBtn').addEventListener('click', () => detectCurrentFrame());
@@ -108,10 +114,10 @@ async function resolvePattern(board) {
     }
     const pool = controllers.pool;
     const frame = state.currentFrame;
-    const fast = $('fastDetectCheck').checked;
+    const opts = detectionOptions();
     const score = async (legacy) => {
         const b = normalizeBoard({ ...board, legacyPattern: legacy });
-        await pool.configure(b, { fastMarkers: fast });
+        await pool.configure(b, opts);
         const rs = await Promise.all(state.views.map(async (view, v) => {
             const r = await view.decoder.getFrame(frame);
             if (!r) return null;
@@ -125,6 +131,36 @@ async function resolvePattern(board) {
     $('boardPattern').value = legacy ? 'legacy' : 'new';
     log(`Board pattern probe on frame ${frame} (${board.boardX}x${board.boardY}, even rows): current layout ${cur.corners} corners / ${cur.markers} markers, legacy (< 4.6) layout ${leg.corners} corners / ${leg.markers} markers → using ${legacy ? 'legacy' : 'current'}${cur.corners === 0 && leg.corners === 0 ? ' (neither found the board on this frame — pick a frame that shows it and detect again)' : ''}`, cur.corners === 0 && leg.corners === 0 ? 'warn' : 'info');
     return normalizeBoard({ ...board, legacyPattern: legacy });
+}
+
+// ---- glare / overexposure settings (calib/glare.js) ------------------------------
+
+export function getGlareFromForm() {
+    return normalizeGlare({
+        cellMargin: numInput('glareCellMargin', 0.13), boardRefine: $('glareBoardRefine').checked,
+        gamma: numInput('glareGamma', 1), minMarkers: intInput('glareMinMarkers', 2),
+    });
+}
+
+export function setGlareForm(glare) {
+    const g = normalizeGlare(glare);
+    $('glareCellMargin').value = g.cellMargin;
+    $('glareBoardRefine').checked = g.boardRefine;
+    $('glareGamma').value = g.gamma;
+    $('glareMinMarkers').value = String(g.minMarkers);
+    $('glarePreset').value = matchGlareLevel(g);
+    updateGlareState();
+}
+
+function updateGlareState() {
+    const g = getGlareFromForm();
+    $('glareState').textContent = glareActive(g) ? `(on: ${describeGlare(g)})` : '';
+    $('glareState').style.color = glareActive(g) ? 'var(--warn)' : '';
+}
+
+/** Options for DetectorPool.configure. */
+function detectionOptions() {
+    return { fastMarkers: $('fastDetectCheck').checked, glare: getGlareFromForm() };
 }
 
 function onBoardFormChanged() {
@@ -163,7 +199,7 @@ export async function detectCurrentFrame() {
         $('detectCurrentResult').textContent = 'detecting…';
         const board = await resolvePattern(getBoardFromForm());
         state.board = board;
-        await pool.configure(board, { fastMarkers: $('fastDetectCheck').checked });
+        await pool.configure(board, detectionOptions());
         const results = await Promise.all(state.views.map(async (view, v) => {
             const r = await view.decoder.getFrame(frame);
             if (!r) return null;
@@ -174,7 +210,8 @@ export async function detectCurrentFrame() {
         state.liveDetection = { frame, perView: results.map(r => r ? { ids: r.ids, corners: r.corners } : null) };
         const parts = results.map((r, v) => `${state.views[v].name}: ${r ? `${r.numMarkers} markers / ${r.ids.length} corners (${r.ms.toFixed(0)} ms)` : 'no frame'}`);
         $('detectCurrentResult').textContent = parts.join(' · ');
-        log(`Frame ${frame}: ${parts.join('; ')} — total ${fmtMs(performance.now() - t0)}`, results.some(r => r && r.ids.length) ? 'success' : 'warn');
+        const g = getGlareFromForm();
+        log(`Frame ${frame}${glareActive(g) ? ` (glare handling: ${describeGlare(g)})` : ''}: ${parts.join('; ')} — total ${fmtMs(performance.now() - t0)}`, results.some(r => r && r.ids.length) ? 'success' : 'warn');
         controllers.video.redraw();
     } catch (e) {
         showError(`Detection failed: ${e.message}`);
@@ -207,7 +244,8 @@ export async function runBatchDetection() {
     setStageStatus('stage2', 'Detecting…', 'active');
     progress.show(`0 / ${totalJobs}`);
     $('detectionResults').style.display = 'none';
-    log(`Batch detection: ${frames.length} frames (stride ${stride}) × ${nViews} views = ${totalJobs} detections, board ${board.boardX}x${board.boardY} ${board.dictName}, ${pool.size} worker(s)`);
+    log(`Batch detection: ${frames.length} frames (stride ${stride}) × ${nViews} views = ${totalJobs} detections, board ${board.boardX}x${board.boardY} ${board.dictName}, glare handling ${describeGlare(getGlareFromForm())}, ${pool.size} worker(s)`);
+    state.detectionOptions = { glare: getGlareFromForm() };
 
     const store = new DetectionStore(viewNames());
     state.detections = store;
@@ -234,7 +272,7 @@ export async function runBatchDetection() {
     const ticker = setInterval(() => update(false), 200);
 
     try {
-        await pool.configure(board, { fastMarkers: $('fastDetectCheck').checked });
+        await pool.configure(board, detectionOptions());
         const t1 = performance.now();
         await Promise.all(state.views.map(async (view, v) => {
             const inflight = new Set();

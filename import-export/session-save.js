@@ -2,7 +2,7 @@
  * import-export/session-save.js — save / restore a calibrat3 session as JSON
  * so a long detection run never has to be repeated.
  *
- * Contents: board, view list (names + sizes, for validation), sampled frames,
+ * Contents: board, detector options (glare handling), view list (names + sizes, for validation), sampled frames,
  * detections (typed arrays as base64), exclusions, intrinsics (incl. per-frame
  * arrays), extrinsics, SBA metadata. Thumbnails and the cross-view
  * reprojection are NOT saved (cheap to recompute).
@@ -25,6 +25,7 @@ export function serializeSession(state) {
             views: state.views.map(v => ({ name: v.name, path: v.path || null, width: v.info.width, height: v.info.height, totalFrames: v.info.totalFrames })),
         },
         board: state.board,
+        detectionOptions: state.detectionOptions || null,
         sampledFrames: state.sampledFrames,
         detections: state.detections ? state.detections.toJSON() : null,
         exclusions: { intrinsics: Array.from(state.exclusions.intrinsics), extrinsics: Array.from(state.exclusions.extrinsics) },
@@ -64,6 +65,7 @@ export function restoreSession(saved, state) {
     const TYPES = { Int32Array, Float32Array, Float64Array, Uint8Array, Uint16Array };
     const untyped = (t) => t ? typedFromB64(t.b64, TYPES[t.t] || Float64Array) : null;
     state.board = { ...saved.board };
+    state.detectionOptions = saved.detectionOptions || null;   // sessions saved before glare handling: null = off
     state.sampledFrames = saved.sampledFrames || [];
     state.detections = saved.detections ? DetectionStore.fromJSON(saved.detections) : null;
     state.exclusions.intrinsics = new Set(saved.exclusions?.intrinsics || []);
