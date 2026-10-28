@@ -17,7 +17,8 @@
  * Globals: MP4Box, DataStream (lib/mp4box/mp4box.all.min.js).
  */
 
-const CHUNK_SIZE = 1024 * 1024;
+import { readSampleTable, completeSamples, trackDurationSec, CHUNK_SIZE } from './sample-table.js';
+
 const MAX_STREAM_GAP = 64;      // continue an open stream if the target is at most this many chunks ahead
 const STREAM_WAIT_MS = 250;     // how long to wait for a target frame before feeding more / flushing
 const REORDER_FEED = 6;         // chunks fed past the target so B-frame decoders emit it without a flush
@@ -69,22 +70,9 @@ export class OnDemandVideoDecoder {
             this.fileSize = source.size;
         }
 
-        const mp4 = MP4Box.createFile();
-        const ready = new Promise((resolve, reject) => {
-            mp4.onError = (e) => reject(new Error(`mp4box: ${e}`));
-            mp4.onReady = resolve;
-        });
-        let resolved = false;
-        ready.then(() => { resolved = true; }, () => { resolved = true; });
-        let offset = 0;
-        while (offset < this.fileSize && !resolved) {
-            const buf = await this.readBytes(offset, Math.min(CHUNK_SIZE, this.fileSize - offset));
-            buf.fileStart = offset;
-            const next = mp4.appendBuffer(buf);
-            offset = (next === undefined) ? offset + buf.byteLength : next;
-            await new Promise(r => setTimeout(r, 0));
-        }
-        const info = await ready;
+        // Every sample, also from each fragment of a fragmented MP4 (sample-table.js)
+        const { mp4, info, fragmented } = await readSampleTable(MP4Box,
+            (offset, size) => this.readBytes(offset, size), this.fileSize, { chunkSize: CHUNK_SIZE });
         if (!info.videoTracks || info.videoTracks.length === 0) throw new Error('No video track');
         const track = info.videoTracks[0];
         const trak = mp4.getTrackById(track.id);
@@ -98,12 +86,13 @@ export class OnDemandVideoDecoder {
         if (!support.supported) throw new Error(`Codec ${codec} not supported by this browser`);
 
         this._extractSamples(mp4, track);
-        const duration = track.duration / track.timescale;
+        // A fragmented MP4's header gives no duration: the samples' durations do
+        const duration = trackDurationSec(track, completeSamples(mp4.getTrackSamplesInfo(track.id), this.fileSize));
         const fps = duration > 0 ? this.samples.length / duration : 30;
         this.info = {
             codec, width: track.video.width, height: track.video.height,
             totalFrames: this.samples.length, keyframes: this.keyframes.length,
-            duration, fps, hasBFrames: this.hasBFrames,
+            duration, fps, hasBFrames: this.hasBFrames, fragmented,
             avgGop: this.samples.length / Math.max(1, this.keyframes.length),
         };
         mp4.flush();
@@ -111,7 +100,7 @@ export class OnDemandVideoDecoder {
     }
 
     _extractSamples(mp4, track) {
-        const infos = mp4.getTrackSamplesInfo(track.id);
+        const infos = completeSamples(mp4.getTrackSamplesInfo(track.id), this.fileSize);   // not frames cut off at the end
         if (!infos || infos.length === 0) throw new Error('No samples in video track');
         const ts = track.timescale;
         this.samples = new Array(infos.length);

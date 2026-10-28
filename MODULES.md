@@ -180,7 +180,19 @@ display decode that keeps the decoder open between seeks, GOP byte cache, option
 reduced-resolution `bitmapScale`), `iterateFrames(frames, {maxPending, signal})`
 (single sequential pass, GOP-grouped, back-pressured, yields `{frame, videoFrame}`),
 `readSampleRange`, `close`, `stats`. `VideoController` — coalesced `seekToFrame`,
-`redraw`, playback, seekbar, keyboard, zoom/pan. Imports: none.
+`redraw`, playback, seekbar, keyboard, zoom/pan. `info.fragmented` says whether the
+file is a fragmented MP4. Imports: sample-table.
+
+### loading/sample-table.js
+Pure (no DOM): an MP4's sample table through mp4box.js. `readSampleTable(MP4Box,
+readBytes, fileSize, {chunkSize})` reads until mp4box has the moov; for a FRAGMENTED
+MP4 (empty moov, samples listed in each moof — campy's videos, ffmpeg `-movflags
+frag_keyframe`) it then walks the rest box by box, giving mp4box every moof but only
+each mdat's header, through a `chunkSize` read window (payloads of larger fragments
+are skipped). `completeSamples(samples, fileSize)` drops frames cut off at the end of
+a crashed file; `trackDurationSec(track, samples)` is the header's duration, or the
+samples' when the header says 0. Exports: `readSampleTable`, `completeSamples`,
+`trackDurationSec`, `CHUNK_SIZE`. Imports: none.
 
 ### loading/detect-worker.js  (classic worker)
 `importScripts` opencv.js; caches dictionary/board/detectors per board key; `detect`

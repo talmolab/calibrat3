@@ -87,6 +87,19 @@ export async function loadText(relPath) {
     return resp.text();
 }
 
+/** Load a binary fixture relative to the repo root as a Uint8Array (Node: fs, browser: fetch). */
+export async function loadBytes(relPath) {
+    if (isNode) {
+        const fs = await import('node:fs/promises');
+        const { fileURLToPath } = await import('node:url');
+        const root = new URL('../', import.meta.url);
+        return new Uint8Array(await fs.readFile(fileURLToPath(new URL(relPath, root))));
+    }
+    const resp = await fetch(new URL(`../${relPath}`, import.meta.url));
+    if (!resp.ok) throw new Error(`fetch ${relPath}: HTTP ${resp.status}`);
+    return new Uint8Array(await resp.arrayBuffer());
+}
+
 export async function run() {
     const reporter = globalThis.__calibrat3TestReporter || null;
     const suite = tests.splice(0, tests.length);
