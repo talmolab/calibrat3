@@ -73,6 +73,7 @@ async function loadSessionImpl(session) {
     resetCalibrationState();
     state.sessionName = session.rootName || 'session';
     state.sessionLayout = session.layout;
+    state.sessionDirHandle = session.dirHandle || null;
     $('sessionLabel').textContent = `${state.sessionName} (${session.layout})`;
     setStageStatus('stage1', 'Loading…', 'active');
     log(`Opening session "${state.sessionName}" — ${session.views.length} view(s), layout=${session.layout}`);

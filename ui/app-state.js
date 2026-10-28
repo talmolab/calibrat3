@@ -15,6 +15,8 @@ export const state = {
     views: [],
     sessionName: '',
     sessionLayout: 'none',
+    /** @type {FileSystemDirectoryHandle|null} the session folder, when opened with the directory picker (exports save there) */
+    sessionDirHandle: null,
     currentFrame: 0,
     totalFrames: 0,
     fps: 30,

@@ -63,7 +63,8 @@ Read the documentation at https://talmolab.github.io/luc3d-docs/#camera-calibrat
 - **Export:** `calibration.toml` (sleap-anipose), a full `calibration_data.json`
   (all observations, triangulated points, per-camera errors), `board.toml`, and a
   **session save** (`*.calibrat3.json`) that restores detections and results
-  without re-detecting.
+  without re-detecting. The save dialog opens in the session folder (Chrome, Edge),
+  so `calibration.toml` lands next to the videos instead of in Downloads.
 - **Diagnostics everywhere:** a ring-buffered log with a verbose toggle, timing
   for every step, reprojection overlays layered on the video (detections,
   intrinsic reprojection, triangulated reprojection), per-frame badges.
@@ -83,7 +84,8 @@ python3 server.py            # http://localhost:8080/  (adds HTTP Range support)
    exclude bad frames (`X`, or ✕ on a card), recompute.
 4. **Extrinsics** — choose the reference camera, *Compute extrinsics*, then
    *Refine (bundle adjustment)*. Exclude frames from the cross-view set if needed.
-5. **Export** — download `calibration.toml` / JSON, or save the session.
+5. **Export** — save `calibration.toml` / JSON, or save the session. The save dialog
+   starts in the session folder when the folder was opened with *Open session folder…*.
 
 ### Keyboard
 
@@ -154,3 +156,8 @@ translation = [tx, ty, tz]     # board units (mm)
 Chromium-based browsers (Chrome, Edge) — WebCodecs, OffscreenCanvas in workers, and
 the File System Access API. Firefox works for the sample session and the
 `webkitdirectory` fallback where WebCodecs is enabled.
+
+Without the File System Access API (Firefox, Safari, and Brave, which turns it off by
+default) exports can't be saved straight into the session folder: they go wherever the
+browser puts downloads, and the log says so. In Brave, turning on "File System Access
+API" in `brave://flags` (then restarting) brings back the folder picker and the save dialog.

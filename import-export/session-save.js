@@ -81,6 +81,51 @@ export function restoreSession(saved, state) {
     state.thumbnails = new Map();
 }
 
+/**
+ * Save text to a file. With the File System Access API (Chrome, Edge) and a folder
+ * handle in `startIn`, a save dialog opens IN that folder (the session folder), so
+ * calibration.toml lands next to the videos instead of in Downloads; the user can
+ * still rename it or pick another place. Without either it is a plain download, which
+ * the browser puts in its downloads folder.
+ *
+ * `content` may be a function returning the text: it then runs only once the user has
+ * picked the file, so a slow serialization cannot use up the click's user activation
+ * (the dialog needs one) before the dialog opens.
+ *
+ * @returns {Promise<null | {how:'picker', handle:FileSystemFileHandle, text:string}
+ *                        | {how:'download', text:string, reason:'no-folder'|'unsupported'|'error', error?:Error}>}
+ *          null if the user cancelled the dialog. reason: no folder handle; the browser
+ *          has no save dialog API (Firefox, Safari, Brave unless its flag is on); or the
+ *          dialog failed to open (the file is downloaded instead).
+ */
+export async function saveText(filename, content, { type = 'application/octet-stream', startIn = null } = {}) {
+    const getText = () => (typeof content === 'function' ? content() : content);
+    const supported = typeof window.showSaveFilePicker === 'function';
+    if (!startIn || !supported) {
+        const text = getText();
+        downloadText(filename, text, type);
+        return { how: 'download', text, reason: supported ? 'no-folder' : 'unsupported' };
+    }
+    const ext = /\.[^.]+$/.exec(filename)?.[0];
+    let handle;
+    try {
+        handle = await window.showSaveFilePicker({
+            suggestedName: filename, startIn,
+            ...(ext ? { types: [{ description: `${ext.slice(1).toUpperCase()} file`, accept: { [type]: [ext] } }] } : {}),
+        });
+    } catch (e) {
+        if (e.name === 'AbortError') return null;
+        const text = getText();
+        downloadText(filename, text, type);
+        return { how: 'download', text, reason: 'error', error: e };
+    }
+    const text = getText();
+    const writable = await handle.createWritable();
+    try { await writable.write(text); await writable.close(); }
+    catch (e) { await writable.abort().catch(() => {}); throw e; }
+    return { how: 'picker', handle, text };
+}
+
 /** Trigger a browser download of text/JSON. */
 export function downloadText(filename, text, type = 'application/octet-stream') {
     const blob = new Blob([text], { type });

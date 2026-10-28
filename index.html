@@ -339,10 +339,10 @@
                 </div>
                 <div class="stage-content">
                     <div class="config-row">
-                        <button id="exportTomlBtn" disabled>Download calibration.toml</button>
-                        <button id="exportSbaJsonBtn" class="secondary" disabled>Download calibration_data.json</button>
+                        <button id="exportTomlBtn" disabled title="Opens a save dialog in the session folder (Chrome, Edge); other browsers download it">Save calibration.toml</button>
+                        <button id="exportSbaJsonBtn" class="secondary" disabled title="Opens a save dialog in the session folder (Chrome, Edge); other browsers download it">Save calibration_data.json</button>
                         <button id="saveSessionBtn" class="secondary" disabled title="Board, sampled frames, detections, exclusions and results — reload without re-detecting">Save session (.json)</button>
-                        <button id="exportBoardBtn" class="secondary">Download board.toml</button>
+                        <button id="exportBoardBtn" class="secondary" title="Opens a save dialog in the session folder (Chrome, Edge); other browsers download it">Save board.toml</button>
                     </div>
                     <h3>calibration.toml <span class="muted small">(sleap-anipose format)</span></h3>
                     <pre id="tomlPreview" class="toml-preview muted"># Complete intrinsics and extrinsics to generate the TOML</pre>
