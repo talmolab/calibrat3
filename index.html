@@ -141,6 +141,70 @@
                         </div>
                     </div>
 
+                    <div class="config-panel" id="glarePanel">
+                        <h3>Glare / overexposure <span id="glareState" class="muted small"></span></h3>
+                        <div class="config-row">
+                            <div class="config-item"><label for="glarePreset" title="Detector settings that recover markers on an overexposed board (bright, washed-out white squares or a glare hotspot). 'Off' is the standard detector. See the guide below.">Glare handling</label>
+                                <select id="glarePreset">
+                                    <option value="off" selected>Off — standard detection (default)</option>
+                                    <option value="light">Level 1 — read marker cell centres</option>
+                                    <option value="medium">Level 2 — + board-guided marker recovery</option>
+                                    <option value="strong">Level 3 — + darken highlights (gamma 2)</option>
+                                    <option value="max">Level 4 — + corners next to a single marker</option>
+                                    <option value="custom">Custom (set below)</option>
+                                </select></div>
+                        </div>
+                        <div class="config-row">
+                            <div class="config-item"><label for="glareCellMargin" title="OpenCV perspectiveRemoveIgnoredMarginPerCell. Fraction of each black/white marker cell ignored at its edge when the marker's bits are read. 0.13 (OpenCV default) reads nearly the whole cell; 0.25–0.49 reads only its centre, which ignores white bits bleeding into their neighbours. Values are truncated to whole pixels (4 px per cell), so 0.13 and 0.2 behave alike, and 0.25–0.49 behave alike.">Cell margin</label><input type="number" id="glareCellMargin" value="0.13" min="0" max="0.49" step="0.01"></div>
+                            <div class="config-item"><label class="overlay-checkbox" title="OpenCV refineDetectedMarkers with the board layout: after the normal search, uses the markers already found to predict where the missing ones should be and re-reads the candidates there. About 1 ms per frame."><input type="checkbox" id="glareBoardRefine"><span>board-guided recovery</span></label></div>
+                            <div class="config-item"><label for="glareGamma" title="Darkens highlights on the copy of the image used to FIND markers (pixel value ^ gamma). 1 = off; 2 is a good value for washed-out boards; 3 is stronger. Corners are still located on the original image, so their accuracy is unchanged. About 2 ms per frame.">Highlight gamma</label><input type="number" id="glareGamma" value="1" min="0.2" max="5" step="0.5"></div>
+                            <div class="config-item"><label for="glareMinMarkers" title="OpenCV CharucoParameters.minMarkers: a ChArUco corner is kept only if at least this many of the markers touching it were found. 2 (default) is the safest. 1 recovers corners at the board edge and next to washed-out markers, with a small risk (about 1 in 1000 of the extra corners) of a mislocated corner.">Min markers / corner</label>
+                                <select id="glareMinMarkers"><option value="2" selected>2 (default)</option><option value="1">1</option></select></div>
+                        </div>
+                        <details class="guide">
+                            <summary>New to this? A step-by-step guide to glare and overexposed boards</summary>
+                            <div class="guide-body">
+                                <h4>What the problem looks like</h4>
+                                <p>A ChArUco board is a chessboard whose white squares each hold a small black-and-white ArUco marker. The app finds the markers first, reads each marker's ID from its pattern of black and white cells, and only then places the chessboard corners (the green dots) between the markers it recognised. If a marker is not recognised, the corners around it are lost too.</p>
+                                <p>When the board is <b>overexposed</b> (too bright), the white parts of the board are blown out to pure white and light <i>bleeds</i> into the black cells next to them, so the markers look "fat" and blurry. A <b>glare hotspot</b> is the same thing in one spot: a shiny reflection of a lamp on the board. In both cases the marker patterns can no longer be read, and whole regions of a clearly visible board get no green dots.</p>
+                                <h4>Step 1 — the best fix is at recording time</h4>
+                                <p>No detector setting can recover detail that was recorded as pure white. If you can re-record, do that first:</p>
+                                <ul>
+                                    <li>Lower the camera's <b>exposure time</b> and/or <b>gain</b> until the board's white squares are light grey rather than pure white. A slightly dark board detects better than a bright one.</li>
+                                    <li>Avoid direct reflections: move or diffuse the lights, or keep the board at an angle where no lamp reflects into a camera. A <b>matte</b> (non-glossy, non-laminated) board print helps a lot.</li>
+                                    <li>Check every camera: one camera is often brighter than the others because it faces the light.</li>
+                                </ul>
+                                <h4>Step 2 — check whether you need glare handling</h4>
+                                <ol>
+                                    <li>Load your videos and set the board above (squares, marker size and dictionary must match your printed board — a wrong dictionary looks just like a detection failure).</li>
+                                    <li>Go to a frame where the board is clearly visible in a camera that looks bright, and press <b>Detect current frame (D)</b>.</li>
+                                    <li>Look at the green dots on the video and at the counts next to the button (markers / corners per camera). If a camera finds far fewer corners than the others, or a clearly visible part of the board — especially the brightest part — has no green dots, glare handling will probably help.</li>
+                                </ol>
+                                <h4>Step 3 — climb the ladder, one level at a time</h4>
+                                <table class="data-table guide-table">
+                                    <thead><tr><th>Setting</th><th>What it does</th><th>Cost</th><th>When to use it</th></tr></thead>
+                                    <tbody>
+                                        <tr><td>Off (default)</td><td>Standard OpenCV detection, exactly as in earlier versions of this app.</td><td>–</td><td>Well-exposed boards.</td></tr>
+                                        <tr><td><b>Level 1</b></td><td>Reads only the centre of each marker cell, so white light bleeding over a cell's edge is ignored.</td><td>none</td><td><b>Recommended first try</b> for any washed-out board. On a test recording it doubled the corners of an overexposed camera, with no corners lost and no change in the corners that were already found.</td></tr>
+                                        <tr><td>Level 2</td><td>Level 1, plus: uses the markers already found and the board layout to look again for the missing markers.</td><td>~1 ms / frame</td><td>If Level 1 still leaves gaps on a visible board.</td></tr>
+                                        <tr><td>Level 3</td><td>Level 2, plus: darkens highlights (gamma 2) on the copy of the image used to find markers. Corners are still placed on the original image.</td><td>~2 ms / frame</td><td>Strong glare hotspots. Usually a small extra gain on bright cameras; on a board that is <i>not</i> overexposed it can lose a few corners (about 1 % on the sample session), so only keep it if your counts go up.</td></tr>
+                                        <tr><td>Level 4</td><td>Level 3, plus: keeps a corner even if only one of the markers touching it was found (normally two are required).</td><td>none</td><td>Last resort, when you need corners at the board edge or right next to a washed-out area. Adds many corners but about 1 in 1000 of the extra ones may be misplaced — later outlier rejection (bundle adjustment) normally removes those.</td></tr>
+                                    </tbody>
+                                </table>
+                                <p>After each change press <b>D</b> again on the same frame and compare the counts. Stop climbing when a level no longer adds corners: higher is not automatically better. Then try two or three other bright frames, and frames that were fine before, to make sure nothing got worse.</p>
+                                <h4>Step 4 — run detection and check the calibration</h4>
+                                <ol>
+                                    <li>Run <b>batch detection</b>. The setting applies to the whole run; detections that were already computed are <i>not</i> updated until you run batch detection again.</li>
+                                    <li>In the Detections table and strip, the bright camera should now have corner counts closer to the other cameras.</li>
+                                    <li>Continue with intrinsics (stage 3) and extrinsics (stage 4) as usual. If the per-camera error or the cross-view reprojection error gets clearly <i>worse</i> than with a lower level, go back down a level.</li>
+                                </ol>
+                                <h4>Custom settings</h4>
+                                <p>Choosing a level fills in the four controls; changing any control switches to <b>Custom</b>. Hover over each control for details. <b>Cell margin</b> is the main fix (0.3 is a good value; 0.13 is OpenCV's default). <b>Board-guided recovery</b> and <b>highlight gamma</b> are small extra gains. <b>Min markers / corner = 1</b> trades a little accuracy for more corners.</p>
+                                <p class="muted small">The chosen settings are written to the log for every detection run and saved in the session file.</p>
+                            </div>
+                        </details>
+                    </div>
+
                     <div class="config-panel">
                         <h3>Batch detection</h3>
                         <div class="config-row">

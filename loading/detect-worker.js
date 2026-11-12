@@ -6,7 +6,7 @@
  * board config and reused for every frame.
  *
  * Protocol (all messages carry `type`):
- *   -> {type:'configure', board}
+ *   -> {type:'configure', board, options:{fastMarkers?, glare?:{cellMargin, boardRefine, gamma, minMarkers}}}
  *   <- {type:'configured', key}
  *   -> {type:'detect', requestId, frame, view, image: VideoFrame|ImageBitmap, width, height,
  *          wantThumb?:boolean, thumbWidth?:number}
@@ -22,7 +22,7 @@
 importScripts('../lib/opencv/opencv.js');
 
 let CV = null;
-let M = null;            // { board } — the ESM board module (dynamic import works in classic workers)
+let M = null;            // { board, glare } — the ESM modules (dynamic import works in classic workers)
 let det = null;          // cached detector bundle
 let canvas = null, ctx = null;
 let thumbCanvas = null, thumbCtx = null;
@@ -59,8 +59,8 @@ function whenOpenCVReady(cvObj) {
 
 (async () => {
     try {
-        const [{ module: m }, board] = await Promise.all([whenOpenCVReady(cv), import('../calib/board.js')]);
-        CV = m; M = { board };
+        const [{ module: m }, board, glare] = await Promise.all([whenOpenCVReady(cv), import('../calib/board.js'), import('../calib/glare.js')]);
+        CV = m; M = { board, glare };
         ready = true;
         postMessage({ type: 'ready' });
         while (queue.length) handle(queue.shift());
@@ -89,7 +89,7 @@ function boardKey(b) { return `${b.boardX}x${b.boardY}|${b.squareLength}|${b.mar
 
 function dispose() {
     if (!det) return;
-    for (const k of ['charucoDetector', 'arucoDetector', 'charucoParams', 'refineParams', 'detectorParams', 'board', 'dictionary']) {
+    for (const k of ['charucoDetector', 'arucoDetector', 'charucoParams', 'refineParams', 'detectorParams', 'board', 'dictionary', 'gammaLut']) {
         try { det[k] && det[k].delete(); } catch (_) { /* */ }
     }
     det = null;
@@ -99,7 +99,9 @@ let fastMarkers = true;    // search markers on a half-resolution image when the
 
 function configure(board, options) {
     fastMarkers = options.fastMarkers !== false;
-    const key = boardKey(board);
+    // Glare / overexposure settings (calib/glare.js); the defaults reproduce the plain detector.
+    const glare = M.glare.normalizeGlare(options.glare);
+    const key = `${boardKey(board)}|${M.glare.glareKey(glare)}`;
     if (det && det.key === key) { postMessage({ type: 'configured', key }); return; }
     dispose();
     const dictId = DICT_IDS()[board.dictName];
@@ -116,11 +118,21 @@ function configure(board, options) {
     if ('cornerRefinementMethod' in detectorParams && CV.CORNER_REFINE_SUBPIX !== undefined) {
         try { detectorParams.cornerRefinementMethod = CV.CORNER_REFINE_SUBPIX; } catch (_) { /* read-only in some builds */ }
     }
+    // Read only the centre of each marker cell: bloomed white bits leak into their neighbours' borders.
+    detectorParams.perspectiveRemoveIgnoredMarginPerCell = glare.cellMargin;
     const refineParams = new CV.aruco_RefineParameters(10.0, 3.0, true);
     const arucoDetector = new CV.aruco_ArucoDetector(dictionary, detectorParams, refineParams);
     const charucoParams = new CV.aruco_CharucoParameters();
+    charucoParams.minMarkers = glare.minMarkers;
     const charucoDetector = new CV.aruco_CharucoDetector(cvBoard, charucoParams, detectorParams, refineParams);
-    det = { key, dictionary, board: cvBoard, detectorParams, refineParams, arucoDetector, charucoParams, charucoDetector, cornerIdOffset: layout.cornerIdOffset };
+    // gamma > 1 darkens highlights on the image used to FIND markers (corners stay on the original).
+    let gammaLut = null;
+    if (glare.gamma !== 1) {
+        const lut = new Array(256);
+        for (let i = 0; i < 256; i++) lut[i] = Math.round(255 * Math.pow(i / 255, glare.gamma));
+        gammaLut = CV.matFromArray(1, 256, CV.CV_8U, lut);
+    }
+    det = { key, dictionary, board: cvBoard, detectorParams, refineParams, arucoDetector, charucoParams, charucoDetector, cornerIdOffset: layout.cornerIdOffset, gammaLut, boardRefine: glare.boardRefine };
     postMessage({ type: 'configured', key });
 }
 
@@ -163,15 +175,20 @@ function detect(msg) {
 
     let markerCorners = new CV.MatVector();
     let markerIds = new CV.Mat();
-    const rejected = new CV.MatVector();
+    let rejected = new CV.MatVector();
     let searchScale = 1;
+    let markerImg = gray;
+    if (det.gammaLut) { markerImg = new CV.Mat(); CV.LUT(gray, det.gammaLut, markerImg); }
+    // Board-guided recovery: re-read rejected candidates where the board layout predicts a marker.
+    const refine = (img) => { if (det.boardRefine && markerIds.rows > 0) det.arucoDetector.refineDetectedMarkers(img, det.board, markerCorners, markerIds, rejected); };
     if (fastMarkers && Math.max(w, h) >= 1400) {
         // Marker search at half resolution (~3-4x cheaper); the ChArUco corner interpolation +
         // subpixel refinement below still runs on the full-resolution gray image.
         searchScale = 0.5;
         const small = new CV.Mat();
-        CV.resize(gray, small, new CV.Size(Math.round(w * searchScale), Math.round(h * searchScale)), 0, 0, CV.INTER_AREA);
+        CV.resize(markerImg, small, new CV.Size(Math.round(w * searchScale), Math.round(h * searchScale)), 0, 0, CV.INTER_AREA);
         det.arucoDetector.detectMarkers(small, markerCorners, markerIds, rejected);
+        if (markerIds.rows >= 4) refine(small);
         small.delete();
         if (markerIds.rows >= 4) {
             for (let m = 0; m < markerCorners.size(); m++) {
@@ -182,14 +199,17 @@ function detect(msg) {
             }
         } else {
             // Too few markers at half resolution (small/far board): redo at full resolution.
-            markerCorners.delete(); markerIds.delete();
-            markerCorners = new CV.MatVector(); markerIds = new CV.Mat();
+            markerCorners.delete(); markerIds.delete(); rejected.delete();
+            markerCorners = new CV.MatVector(); markerIds = new CV.Mat(); rejected = new CV.MatVector();
             searchScale = 1;
-            det.arucoDetector.detectMarkers(gray, markerCorners, markerIds, rejected);
+            det.arucoDetector.detectMarkers(markerImg, markerCorners, markerIds, rejected);
+            refine(markerImg);
         }
     } else {
-        det.arucoDetector.detectMarkers(gray, markerCorners, markerIds, rejected);
+        det.arucoDetector.detectMarkers(markerImg, markerCorners, markerIds, rejected);
+        refine(markerImg);
     }
+    if (markerImg !== gray) markerImg.delete();
     const numMarkers = markerIds.rows;
     const t2 = performance.now();
 

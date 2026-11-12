@@ -38,6 +38,10 @@ Read the documentation at https://talmolab.github.io/luc3d-docs/#camera-calibrat
   coverage), per-frame reprojection errors for *every* valid frame, swarm plot,
   worst-frames gallery with lazy thumbnails captured during detection, and
   frame exclusion keyed by video frame (`X`).
+- **Glare / overexposed boards:** an opt-in ladder of detector settings (stage 2,
+  *Glare handling*, off by default) with a step-by-step guide in the app. Level 1 reads only
+  the centre of each marker cell, which ignores white bits bleeding into their neighbours;
+  on an overexposed camera it doubled the detected corners at no extra cost.
 - **Old and new ChArUco layouts:** boards printed with opencv-contrib-python < 4.6
   (even row counts start with a white marker square) are detected via an emulated legacy
   layout; *Board pattern: auto* probes both conventions on the current frame. board.toml

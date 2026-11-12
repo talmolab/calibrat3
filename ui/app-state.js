@@ -24,6 +24,8 @@ export const state = {
     board: { ...DEFAULT_BOARD },
     /** @type {import('../calib/detection-store.js').DetectionStore|null} */
     detections: null,
+    /** Detector options of the last batch run, e.g. {glare: {...}} (calib/glare.js). Saved with the session. */
+    detectionOptions: null,
     /** @type {number[]} frames that were sampled in the last batch run */
     sampledFrames: [],
     /** @type {Map<number, Blob>} frame -> JPEG thumbnail (view 0), captured during the batch pass */

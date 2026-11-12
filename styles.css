@@ -96,6 +96,15 @@ button.danger { background: #7a2e2e; }
 .hotkeys summary { cursor: pointer; color: var(--muted); }
 .hotkeys-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 4px 12px; margin-top: 6px; }
 .hotkey { display: flex; gap: 8px; }
+.guide { margin-top: 8px; font-size: 12.5px; }
+.guide summary { cursor: pointer; color: var(--accent); }
+.guide-body { margin-top: 6px; color: #ccc; max-width: 760px; }
+.guide-body h4 { margin: .8rem 0 .2rem; font-size: 12.5px; color: #fff; }
+.guide-body ul, .guide-body ol { margin: .2rem 0 .6rem; padding-left: 1.3rem; }
+.guide-body li { margin: .15rem 0; }
+.data-table.guide-table { font-family: inherit; font-size: 12px; }
+.data-table.guide-table td, .data-table.guide-table th { vertical-align: top; text-align: left; white-space: normal; }
+.data-table.guide-table td:first-child { white-space: nowrap; }
 .hotkey-key { color: var(--accent); font-family: ui-monospace, monospace; min-width: 84px; }
 .hotkey-desc { color: #aaa; }
 
