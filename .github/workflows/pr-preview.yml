@@ -13,8 +13,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Fork PRs get a read-only GITHUB_TOKEN no matter what `permissions:` says, so
+  # pushing to gh-pages (and commenting) would fail: only same-repo PRs get previews.
+  # Do not switch to pull_request_target: it would run fork code with a write token.
   deploy:
-    if: github.event.action != 'closed'
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,7 +45,7 @@ jobs:
             _This preview will be removed when the PR is closed._
 
   cleanup:
-    if: github.event.action == 'closed'
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

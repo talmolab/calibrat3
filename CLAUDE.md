@@ -259,6 +259,9 @@ with intrinsics/translations matching to ~1 mm.
 (JamesIves action, `folder: .`, `clean-exclude: pr/`); `pr-preview.yml` deploys each
 PR under `pr/<n>/` and posts a sticky comment. Repo settings required: Pages source =
 `gh-pages` / root; Actions workflow permissions = read and write. `.nojekyll` is present.
+Previews (deploy and cleanup) run only for PRs from branches of this repo: GitHub gives
+fork-triggered `pull_request` runs a read-only token, so the gh-pages push would 403; fork
+PRs show the jobs as skipped. Don't "fix" this with `pull_request_target` (fork code + write token).
 
 ## Gotchas
 
