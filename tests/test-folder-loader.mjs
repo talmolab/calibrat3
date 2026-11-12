@@ -1,5 +1,5 @@
 import { test, run, assert } from './harness.mjs';
-import { buildSession, VIDEO_EXT, shortenNames } from '../loading/folder-loader.js';
+import { buildSession, scanDirectoryHandle, VIDEO_EXT, shortenNames } from '../loading/folder-loader.js';
 
 const fakeFile = (text = '', size = 1000) => ({ size, text: async () => text });
 const BOARD = 'board_x = 5\nboard_y = 7\nsquare_length = 30\nmarker_length = 22.5\nmarker_bits = 5\ndict_size = 100\n';
@@ -90,6 +90,27 @@ test('flat layout uses shortened view names and notes it', async () => {
     const s = await buildSession([{ path: '1007-back-calibration.mp4', file: fakeFile() }, { path: '1007-top-calibration.mp4', file: fakeFile() }]);
     assert.deepEqual(s.views.map(v => v.name), ['back', 'top']);
     assert.ok(s.notes.some(n => n.includes('shortened')));
+});
+
+// Minimal FileSystemDirectoryHandle: {name: text} files and {name: {...}} subfolders.
+const fakeDir = (name, tree) => ({
+    kind: 'directory', name,
+    async *values() {
+        for (const [k, v] of Object.entries(tree)) {
+            yield typeof v === 'string' ? { kind: 'file', name: k, getFile: async () => fakeFile(v) } : fakeDir(k, v);
+        }
+    },
+});
+
+test('scanDirectoryHandle keeps the picked folder so exports can be saved into it', async () => {
+    const root = fakeDir('20260428_160319-calibration', {
+        Camera0_mid: { 'calib.mp4': '' }, Camera1_topB: { 'calib.mp4': '' }, 'board.toml': BOARD,
+    });
+    const s = await scanDirectoryHandle(root);
+    assert.equal(s.layout, 'nested');
+    assert.deepEqual(s.views.map(v => v.name), ['Camera0_mid', 'Camera1_topB']);
+    assert.equal(s.rootName, '20260428_160319-calibration');
+    assert.equal(s.dirHandle, root);
 });
 
 run();

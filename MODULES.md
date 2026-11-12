@@ -167,8 +167,10 @@ Imports: app-state, log-panel, stages, frame-strip, plots, gallery, calib/triang
 calib/sba, calib/geometry, events.
 
 ### ui/stage-export.js
-`setupExportStage`, `buildToml`, `updateTomlPreview`; downloads TOML / JSON /
-board.toml / session. Imports: app-state, import-export/*, log-panel, stages, events.
+`setupExportStage`, `buildToml`, `updateTomlPreview`; saves TOML / JSON /
+board.toml / session into the session folder (`state.sessionDirHandle`) when the
+browser can, else downloads, and logs where each file went. Imports: app-state,
+import-export/*, log-panel, stages, events.
 
 ---
 
@@ -215,8 +217,8 @@ intrinsics run in parallel; `init`, `request(type, payload, {onProgress})`, `ter
 
 ### loading/folder-loader.js
 `buildSession(entries)` (flat / nested layouts, board.toml discovery),
-`scanDirectoryHandle`, `scanFileList`, `pickSessionFolder`, `loadSampleSession`,
-`VIDEO_EXT`. Imports: import-export/toml.
+`scanDirectoryHandle` (keeps the folder as `session.dirHandle`), `scanFileList`,
+`pickSessionFolder`, `loadSampleSession`, `VIDEO_EXT`. Imports: import-export/toml.
 
 ### loading/opencv-ready.js
 `waitForOpenCV(cvGlobal)` — resolves the initialized module for either UMD flavour.
@@ -235,7 +237,9 @@ SBA + reprojection metadata (flat arrays). Imports: calib/board.
 
 ### import-export/session-save.js
 `serializeSession(state)`, `validateSession(saved, state)`, `restoreSession(saved, state)`,
-`downloadText`, `SESSION_FORMAT_VERSION`. Imports: calib/detection-store.
+`saveText(filename, content, {type, startIn})` (save dialog opened in the `startIn`
+folder via the File System Access API, else a download), `downloadText`,
+`SESSION_FORMAT_VERSION`. Imports: calib/detection-store.
 
 ---
 

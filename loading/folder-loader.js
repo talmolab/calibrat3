@@ -24,7 +24,9 @@ const CALIB_DIRS = ['calibration_images', 'calibration', 'calib', 'calibration_v
 
 /**
  * @typedef {{name:string, source: File|string, path:string, size?:number}} ViewSource
- * @typedef {{layout:'flat'|'nested'|'none', views:ViewSource[], board:object|null, boardPath:string|null, notes:string[]}} SessionDescription
+ * @typedef {{layout:'flat'|'nested'|'none', views:ViewSource[], board:object|null, boardPath:string|null, notes:string[], rootName?:string, dirHandle?:FileSystemDirectoryHandle}} SessionDescription
+ *   dirHandle: the picked folder, only when it was opened with the File System Access API;
+ *   exports open their save dialog there (ui/stage-export.js).
  */
 
 /** Build a session description from a flat list of {path, file} (paths relative to root, '/'-separated). */
@@ -106,6 +108,7 @@ export async function scanDirectoryHandle(dirHandle, maxDepth = 3) {
     await walk(dirHandle, '', 0);
     const session = await buildSession(entries);
     session.rootName = dirHandle.name;
+    session.dirHandle = dirHandle;
     return session;
 }
 
