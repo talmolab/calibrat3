@@ -1,0 +1,31 @@
+@talmolab/sba-solver-wasm — Rust/WASM sparse bundle adjustment + DLT triangulation.
+
+Version:  0.2.0  (npm dist tarball, unmodified)
+Source:   https://www.npmjs.com/package/@talmolab/sba-solver-wasm
+          https://github.com/talmolab/sba-solver-wasm
+Fetched:  2026-09-05
+License:  Apache-2.0 (LICENSE alongside)
+
+Files:    wrapper.js             ESM API: initSBA, runBundleAdjustment,
+                                 triangulatePoint(s), projectPoint(s),
+                                 computeReprojectionErrors, undistortPoints,
+                                 rotationMatrixToQuaternion, quaternionToRotationMatrix
+          sba_solver_wasm.js     wasm-bindgen glue (ESM, default export = init)
+          sba_solver_wasm_bg.wasm
+          sba_solver_wasm.d.ts
+
+Why here: the vibe dynamically import()ed wrapper.js from jsDelivr. Vendored so
+          the app is self-contained/offline and pinned. wrapper.js resolves the
+          glue via new URL('./sba_solver_wasm.js', import.meta.url), so the three
+          runtime files must stay in the same directory. It is imported from a
+          module worker (loading/calib-worker.js) as well as the main thread.
+
+Contract notes (not compile-checked, re-verify on bump):
+          - camera.rotation is a quaternion [w, x, y, z], world->camera.
+          - runBundleAdjustment config keys: max_iterations, cost_tolerance,
+            parameter_tolerance, gradient_tolerance, robust_loss ('none'|'huber'|
+            'cauchy'), robust_loss_param, optimize_extrinsics/points/intrinsics,
+            outlier_threshold (0 = off), reference_camera, ignore_frames.
+          - all data crosses the WASM boundary as JSON strings.
+
+Re-fetch: npm pack @talmolab/sba-solver-wasm@<ver>; copy the files listed above.
