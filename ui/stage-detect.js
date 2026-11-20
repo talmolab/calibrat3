@@ -157,6 +157,7 @@ function getDetectionOptions() {
         minMarkers: Math.max(0, Math.min(2, intInput('minMarkers', 2))),
         recoverMarkers: $('recoverMarkersCheck').checked,
         minMarkerPerimeterRate: Math.max(0, Math.min(4, numInput('minMarkerPerimeterRate', 0.03))),
+        markerRefinement: $('markerRefinement').value,
     };
 }
 

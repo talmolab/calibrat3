@@ -7,7 +7,7 @@
  *
  * Protocol (all messages carry `type`):
  *   -> {type:'configure', board, options?:{fastMarkers?:boolean, minMarkers?:number,
- *          recoverMarkers?:boolean, minMarkerPerimeterRate?:number}}
+ *          recoverMarkers?:boolean, minMarkerPerimeterRate?:number, markerRefinement?:'none'|'subpixel'}}
  *   <- {type:'configured', key}
  *   -> {type:'detect', requestId, frame, view, image: VideoFrame|ImageBitmap, width, height,
  *          wantThumb?:boolean, thumbWidth?:number}
@@ -104,12 +104,16 @@ function configure(board, options) {
         throw new Error('minMarkers must be 0, 1 or 2');
     }
     const recoverMarkers = !!options.recoverMarkers;
+    const markerRefinement = options.markerRefinement ?? 'subpixel';
+    if (!['none', 'subpixel'].includes(markerRefinement)) {
+        throw new Error('Marker corner refinement must be none or subpixel');
+    }
     const minMarkerPerimeterRate = options.minMarkerPerimeterRate ?? 0.03;
     if (!Number.isFinite(minMarkerPerimeterRate) || minMarkerPerimeterRate < 0 || minMarkerPerimeterRate > 4) {
         throw new Error('Minimum marker size must be between 0 and 4');
     }
     fastMarkers = options.fastMarkers !== false;
-    const key = `${boardKey(board)}|minMarkers=${minMarkers}|recover=${recoverMarkers}|minPerimeter=${minMarkerPerimeterRate}`;
+    const key = `${boardKey(board)}|minMarkers=${minMarkers}|recover=${recoverMarkers}|minPerimeter=${minMarkerPerimeterRate}|refinement=${markerRefinement}`;
     if (det && det.key === key) { postMessage({ type: 'configured', key }); return; }
     dispose();
     const dictId = DICT_IDS()[board.dictName];
@@ -123,10 +127,8 @@ function configure(board, options) {
     ids.delete();
     const detectorParams = new CV.aruco_DetectorParameters();
     detectorParams.minMarkerPerimeterRate = minMarkerPerimeterRate;
-    // Subpixel corner refinement makes a measurable difference for calibration.
-    if ('cornerRefinementMethod' in detectorParams && CV.CORNER_REFINE_SUBPIX !== undefined) {
-        try { detectorParams.cornerRefinementMethod = CV.CORNER_REFINE_SUBPIX; } catch (_) { /* read-only in some builds */ }
-    }
+    // ChArUco corners are refined independently of this marker setting.
+    detectorParams.cornerRefinementMethod = markerRefinement === 'none' ? CV.CORNER_REFINE_NONE : CV.CORNER_REFINE_SUBPIX;
     const refineParams = new CV.aruco_RefineParameters(10.0, 3.0, true);
     const arucoDetector = new CV.aruco_ArucoDetector(dictionary, detectorParams, refineParams);
     const charucoParams = new CV.aruco_CharucoParameters();
