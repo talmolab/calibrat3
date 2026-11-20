@@ -20,7 +20,6 @@ import { emit, on } from './events.js';
 import { registerKeyHandler } from './video-panel.js';
 import { setDetectionWorkersBusy, waitForDetectionWorkers } from './worker-controls.js';
 
-const MAX_INFLIGHT_PER_VIEW = 2;   // frames handed to the pool but not yet returned, per view
 const THUMB_WIDTH = 160;
 
 let strip = null, table = null, progress = null;
@@ -223,6 +222,8 @@ export async function runBatchDetection() {
     finally { detectionBusy = false; }
     const { frames, stride } = plannedFrames();
     const nViews = state.views.length;
+    // Keep the pool fed while bounding outstanding detections per camera.
+    const maxInflightPerView = Math.max(1, Math.ceil(pool.size / nViews));
     const totalJobs = frames.length * nViews;
 
     state.detectionRunning = true;
@@ -271,8 +272,8 @@ export async function runBatchDetection() {
             const decodedBefore = decoder.stats.decoded;
             try {
                 for await (const { frame, videoFrame } of decoder.iterateFrames(frames, { maxPending: 2, signal: abort.signal })) {
+                    while (inflight.size >= maxInflightPerView && !abort.signal.aborted) await Promise.race(inflight);
                     if (abort.signal.aborted) { videoFrame.close(); break; }
-                    while (inflight.size >= MAX_INFLIGHT_PER_VIEW) await Promise.race(inflight);
                     let p;
                     try {
                         p = pool.detect({ frame, view: v, image: videoFrame, width: view.info.width, height: view.info.height, wantThumb: v === 0, thumbWidth: THUMB_WIDTH });
