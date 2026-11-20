@@ -99,7 +99,7 @@ export function setBoardForm(board, sourceLabel = '') {
  * conventions and keeping the one that finds more corners. Only matters for even-row boards.
  * Sets the select to the winner so batch detection and the exported board.toml are explicit.
  */
-async function resolvePattern(board) {
+async function resolvePattern(board, options) {
     if (boardPatternChoice() !== 'auto') return board;
     if (!legacyPatternDiffers(board)) {
         log(`Board pattern: ${board.boardY} rows (odd) — legacy and current ChArUco layouts are identical, nothing to probe`);
@@ -108,10 +108,9 @@ async function resolvePattern(board) {
     }
     const pool = controllers.pool;
     const frame = state.currentFrame;
-    const fast = $('fastDetectCheck').checked;
     const score = async (legacy) => {
         const b = normalizeBoard({ ...board, legacyPattern: legacy });
-        await pool.configure(b, { fastMarkers: fast });
+        await pool.configure(b, options);
         const rs = await Promise.all(state.views.map(async (view, v) => {
             const r = await view.decoder.getFrame(frame);
             if (!r) return null;
@@ -152,6 +151,13 @@ function plannedFrames() {
     return stridedFrames(state.totalFrames, Math.max(1, intInput('targetSamples', 100)));
 }
 
+function getDetectionOptions() {
+    return {
+        fastMarkers: $('fastDetectCheck').checked,
+        minMarkers: Math.max(0, Math.min(2, intInput('minMarkers', 2))),
+    };
+}
+
 // ---- single frame --------------------------------------------------------------
 
 export async function detectCurrentFrame() {
@@ -161,9 +167,10 @@ export async function detectCurrentFrame() {
     const t0 = performance.now();
     try {
         $('detectCurrentResult').textContent = 'detecting…';
-        const board = await resolvePattern(getBoardFromForm());
+        const options = getDetectionOptions();
+        const board = await resolvePattern(getBoardFromForm(), options);
         state.board = board;
-        await pool.configure(board, { fastMarkers: $('fastDetectCheck').checked });
+        await pool.configure(board, options);
         const results = await Promise.all(state.views.map(async (view, v) => {
             const r = await view.decoder.getFrame(frame);
             if (!r) return null;
@@ -190,7 +197,8 @@ export async function runBatchDetection() {
     const vc = controllers.video;
     if (state.isPlaying) vc.stopPlayback();
     let board;
-    try { board = await resolvePattern(getBoardFromForm()); state.board = board; }
+    const options = getDetectionOptions();
+    try { board = await resolvePattern(getBoardFromForm(), options); state.board = board; }
     catch (e) { showError(`Board pattern probe failed: ${e.message}`); return; }
     const { frames, stride } = plannedFrames();
     const nViews = state.views.length;
@@ -234,7 +242,7 @@ export async function runBatchDetection() {
     const ticker = setInterval(() => update(false), 200);
 
     try {
-        await pool.configure(board, { fastMarkers: $('fastDetectCheck').checked });
+        await pool.configure(board, options);
         const t1 = performance.now();
         await Promise.all(state.views.map(async (view, v) => {
             const inflight = new Set();

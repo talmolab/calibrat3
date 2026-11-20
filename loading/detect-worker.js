@@ -6,7 +6,7 @@
  * board config and reused for every frame.
  *
  * Protocol (all messages carry `type`):
- *   -> {type:'configure', board}
+ *   -> {type:'configure', board, options?:{fastMarkers?:boolean, minMarkers?:number}}
  *   <- {type:'configured', key}
  *   -> {type:'detect', requestId, frame, view, image: VideoFrame|ImageBitmap, width, height,
  *          wantThumb?:boolean, thumbWidth?:number}
@@ -98,8 +98,12 @@ function dispose() {
 let fastMarkers = true;    // search markers on a half-resolution image when the frame is large; corners are refined at full resolution
 
 function configure(board, options) {
+    const minMarkers = options.minMarkers ?? 2;
+    if (!Number.isInteger(minMarkers) || minMarkers < 0 || minMarkers > 2) {
+        throw new Error('minMarkers must be 0, 1 or 2');
+    }
     fastMarkers = options.fastMarkers !== false;
-    const key = boardKey(board);
+    const key = `${boardKey(board)}|minMarkers=${minMarkers}`;
     if (det && det.key === key) { postMessage({ type: 'configured', key }); return; }
     dispose();
     const dictId = DICT_IDS()[board.dictName];
@@ -119,6 +123,7 @@ function configure(board, options) {
     const refineParams = new CV.aruco_RefineParameters(10.0, 3.0, true);
     const arucoDetector = new CV.aruco_ArucoDetector(dictionary, detectorParams, refineParams);
     const charucoParams = new CV.aruco_CharucoParameters();
+    charucoParams.minMarkers = minMarkers;
     const charucoDetector = new CV.aruco_CharucoDetector(cvBoard, charucoParams, detectorParams, refineParams);
     det = { key, dictionary, board: cvBoard, detectorParams, refineParams, arucoDetector, charucoParams, charucoDetector, cornerIdOffset: layout.cornerIdOffset };
     postMessage({ type: 'configured', key });
