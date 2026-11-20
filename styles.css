@@ -123,6 +123,7 @@ button.danger { background: #7a2e2e; }
 .config-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
 .config-item { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .config-item label { color: #aaa; font-size: 12px; }
+.detection-advanced summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 input[type=number], select, input[type=text] { background: #1a1a1a; border: 1px solid #444; color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: 13px; }
 input[type=number] { width: 78px; }
 .view-list { margin: 6px 0; font-size: 13px; }

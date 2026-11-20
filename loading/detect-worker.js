@@ -6,7 +6,8 @@
  * board config and reused for every frame.
  *
  * Protocol (all messages carry `type`):
- *   -> {type:'configure', board, options?:{fastMarkers?:boolean, minMarkers?:number}}
+ *   -> {type:'configure', board, options?:{fastMarkers?:boolean, minMarkers?:number,
+ *          recoverMarkers?:boolean, minMarkerPerimeterRate?:number}}
  *   <- {type:'configured', key}
  *   -> {type:'detect', requestId, frame, view, image: VideoFrame|ImageBitmap, width, height,
  *          wantThumb?:boolean, thumbWidth?:number}
@@ -102,8 +103,13 @@ function configure(board, options) {
     if (!Number.isInteger(minMarkers) || minMarkers < 0 || minMarkers > 2) {
         throw new Error('minMarkers must be 0, 1 or 2');
     }
+    const recoverMarkers = !!options.recoverMarkers;
+    const minMarkerPerimeterRate = options.minMarkerPerimeterRate ?? 0.03;
+    if (!Number.isFinite(minMarkerPerimeterRate) || minMarkerPerimeterRate < 0 || minMarkerPerimeterRate > 4) {
+        throw new Error('Minimum marker size must be between 0 and 4');
+    }
     fastMarkers = options.fastMarkers !== false;
-    const key = `${boardKey(board)}|minMarkers=${minMarkers}`;
+    const key = `${boardKey(board)}|minMarkers=${minMarkers}|recover=${recoverMarkers}|minPerimeter=${minMarkerPerimeterRate}`;
     if (det && det.key === key) { postMessage({ type: 'configured', key }); return; }
     dispose();
     const dictId = DICT_IDS()[board.dictName];
@@ -116,6 +122,7 @@ function configure(board, options) {
     const cvBoard = new CV.aruco_CharucoBoard(new CV.Size(layout.sizeX, layout.sizeY), board.squareLength, board.markerLength, dictionary, ids);
     ids.delete();
     const detectorParams = new CV.aruco_DetectorParameters();
+    detectorParams.minMarkerPerimeterRate = minMarkerPerimeterRate;
     // Subpixel corner refinement makes a measurable difference for calibration.
     if ('cornerRefinementMethod' in detectorParams && CV.CORNER_REFINE_SUBPIX !== undefined) {
         try { detectorParams.cornerRefinementMethod = CV.CORNER_REFINE_SUBPIX; } catch (_) { /* read-only in some builds */ }
@@ -125,7 +132,7 @@ function configure(board, options) {
     const charucoParams = new CV.aruco_CharucoParameters();
     charucoParams.minMarkers = minMarkers;
     const charucoDetector = new CV.aruco_CharucoDetector(cvBoard, charucoParams, detectorParams, refineParams);
-    det = { key, dictionary, board: cvBoard, detectorParams, refineParams, arucoDetector, charucoParams, charucoDetector, cornerIdOffset: layout.cornerIdOffset };
+    det = { key, dictionary, board: cvBoard, detectorParams, refineParams, arucoDetector, charucoParams, charucoDetector, recoverMarkers, cornerIdOffset: layout.cornerIdOffset };
     postMessage({ type: 'configured', key });
 }
 
@@ -179,11 +186,14 @@ function detect(msg) {
         det.arucoDetector.detectMarkers(small, markerCorners, markerIds, rejected);
         small.delete();
         if (markerIds.rows >= 4) {
-            for (let m = 0; m < markerCorners.size(); m++) {
-                const c = markerCorners.get(m);
-                const d = c.data32F;
-                for (let k = 0; k < d.length; k++) d[k] /= searchScale;
-                c.delete();
+            // Recovery compares rejected candidates with board projections in full-resolution coordinates.
+            for (const points of det.recoverMarkers ? [markerCorners, rejected] : [markerCorners]) {
+                for (let m = 0; m < points.size(); m++) {
+                    const c = points.get(m);
+                    const d = c.data32F;
+                    for (let k = 0; k < d.length; k++) d[k] /= searchScale;
+                    c.delete();
+                }
             }
         } else {
             // Too few markers at half resolution (small/far board): redo at full resolution.
@@ -194,6 +204,10 @@ function detect(msg) {
         }
     } else {
         det.arucoDetector.detectMarkers(gray, markerCorners, markerIds, rejected);
+    }
+    if (det.recoverMarkers && markerIds.rows > 0 && rejected.size() > 0) {
+        // CharucoDetector's automatic recovery only runs when it also performs marker detection.
+        det.arucoDetector.refineDetectedMarkers(gray, det.board, markerCorners, markerIds, rejected);
     }
     const numMarkers = markerIds.rows;
     const t2 = performance.now();
