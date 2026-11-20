@@ -158,6 +158,7 @@ function getDetectionOptions() {
         recoverMarkers: $('recoverMarkersCheck').checked,
         minMarkerPerimeterRate: Math.max(0, Math.min(4, numInput('minMarkerPerimeterRate', 0.03))),
         markerRefinement: $('markerRefinement').value,
+        adaptiveThreshWinSizeMax: Math.max(3, intInput('adaptiveThreshWinSizeMax', 23)),
     };
 }
 

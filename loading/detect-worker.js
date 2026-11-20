@@ -7,7 +7,8 @@
  *
  * Protocol (all messages carry `type`):
  *   -> {type:'configure', board, options?:{fastMarkers?:boolean, minMarkers?:number,
- *          recoverMarkers?:boolean, minMarkerPerimeterRate?:number, markerRefinement?:'none'|'subpixel'}}
+ *          recoverMarkers?:boolean, minMarkerPerimeterRate?:number, markerRefinement?:'none'|'subpixel',
+ *          adaptiveThreshWinSizeMax?:number}}
  *   <- {type:'configured', key}
  *   -> {type:'detect', requestId, frame, view, image: VideoFrame|ImageBitmap, width, height,
  *          wantThumb?:boolean, thumbWidth?:number}
@@ -108,12 +109,16 @@ function configure(board, options) {
     if (!['none', 'subpixel'].includes(markerRefinement)) {
         throw new Error('Marker corner refinement must be none or subpixel');
     }
+    const adaptiveThreshWinSizeMax = options.adaptiveThreshWinSizeMax ?? 23;
+    if (!Number.isInteger(adaptiveThreshWinSizeMax) || adaptiveThreshWinSizeMax < 3) {
+        throw new Error('Maximum threshold window must be an integer of at least 3 px');
+    }
     const minMarkerPerimeterRate = options.minMarkerPerimeterRate ?? 0.03;
     if (!Number.isFinite(minMarkerPerimeterRate) || minMarkerPerimeterRate < 0 || minMarkerPerimeterRate > 4) {
         throw new Error('Minimum marker size must be between 0 and 4');
     }
     fastMarkers = options.fastMarkers !== false;
-    const key = `${boardKey(board)}|minMarkers=${minMarkers}|recover=${recoverMarkers}|minPerimeter=${minMarkerPerimeterRate}|refinement=${markerRefinement}`;
+    const key = `${boardKey(board)}|minMarkers=${minMarkers}|recover=${recoverMarkers}|minPerimeter=${minMarkerPerimeterRate}|refinement=${markerRefinement}|thresholdMax=${adaptiveThreshWinSizeMax}`;
     if (det && det.key === key) { postMessage({ type: 'configured', key }); return; }
     dispose();
     const dictId = DICT_IDS()[board.dictName];
@@ -127,6 +132,7 @@ function configure(board, options) {
     ids.delete();
     const detectorParams = new CV.aruco_DetectorParameters();
     detectorParams.minMarkerPerimeterRate = minMarkerPerimeterRate;
+    detectorParams.adaptiveThreshWinSizeMax = adaptiveThreshWinSizeMax;
     // ChArUco corners are refined independently of this marker setting.
     detectorParams.cornerRefinementMethod = markerRefinement === 'none' ? CV.CORNER_REFINE_NONE : CV.CORNER_REFINE_SUBPIX;
     const refineParams = new CV.aruco_RefineParameters(10.0, 3.0, true);

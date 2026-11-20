@@ -57,7 +57,7 @@ export class DetectorPool {
     /** Build detectors for `board` in every worker (cached by config key). */
     async configure(board, options = {}) {
         await this.init();
-        const key = `${board.boardX}x${board.boardY}|${board.squareLength}|${board.markerLength}|${board.dictName}|legacy=${!!board.legacyPattern}|fast=${options.fastMarkers !== false}|minMarkers=${options.minMarkers ?? 2}|recover=${!!options.recoverMarkers}|minPerimeter=${options.minMarkerPerimeterRate ?? 0.03}|refinement=${options.markerRefinement ?? 'subpixel'}`;
+        const key = `${board.boardX}x${board.boardY}|${board.squareLength}|${board.markerLength}|${board.dictName}|legacy=${!!board.legacyPattern}|fast=${options.fastMarkers !== false}|minMarkers=${options.minMarkers ?? 2}|recover=${!!options.recoverMarkers}|minPerimeter=${options.minMarkerPerimeterRate ?? 0.03}|refinement=${options.markerRefinement ?? 'subpixel'}|thresholdMax=${options.adaptiveThreshWinSizeMax ?? 23}`;
         if (key === this.boardKey) return;
         await Promise.all(this.workers.map((w) => new Promise((resolve, reject) => {
             const onMsg = (e) => {
