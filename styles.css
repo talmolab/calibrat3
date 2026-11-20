@@ -32,6 +32,9 @@ code { background: #111; padding: 1px 5px; border-radius: 3px; font-size: 12px; 
 .worker-status { font-family: ui-monospace, monospace; }
 .worker-status.ok { color: var(--good); }
 .worker-status.err { color: var(--bad); }
+.worker-controls, .worker-control { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.worker-controls input[type=number] { width: 90px; padding: 3px 6px; font-size: 12px; }
+.worker-controls input::placeholder { color: #aaa; opacity: 1; }
 .topbar-link { color: var(--accent); text-decoration: none; }
 
 .error-msg { display: none; background: #4a1d1d; border: 1px solid #7a2e2e; color: #ffb4b4; padding: 8px 16px; margin: 8px 16px 0; border-radius: 6px; font-size: 13px; }

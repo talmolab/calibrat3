@@ -53,6 +53,14 @@ try {
     step('page loaded; waiting for workers');
     await waitState(() => document.getElementById('workerStatus').classList.contains('ok'), null, { timeout: 120000 });
     step(await page.textContent('#workerStatus'));
+    const workerControls = await page.evaluate(() => ['detectionWorkers', 'calibrationWorkers'].every(id => {
+        const input = document.getElementById(id);
+        return input.closest('.topbar') && input.value === '' && /^Auto \(\d+\)$/.test(input.placeholder);
+    }));
+    if (!workerControls || await page.locator('#poolInfo').count()) throw new Error('Worker controls must be in the top bar with resolved Auto counts');
+    await page.fill('#calibrationWorkers', '2');
+    await page.dispatchEvent('#calibrationWorkers', 'change');
+    await waitState(() => !document.getElementById('calibrationWorkers').disabled && window.__calibrat3.controllers.calib.workers.length === 2);
 
     await page.click('#loadSampleBtn');
     await waitState(() => window.__calibrat3.state.views.length === 4 && window.__calibrat3.state.totalFrames > 0, null, { timeout: 60000 });
@@ -62,6 +70,7 @@ try {
     await page.fill('#targetSamples', String(TARGET));
     await page.dispatchEvent('#targetSamples', 'input');
     await page.click('#runDetectionBtn');
+    if (!await page.isDisabled('#detectionWorkers') || await page.isDisabled('#calibrationWorkers')) throw new Error('Detection must lock only its worker control');
     await waitState(() => !window.__calibrat3.state.detectionRunning && window.__calibrat3.state.detections && window.__calibrat3.state.detections.size > 0, null, { timeout: 300000 });
     const s2 = await state();
     step(`detections stored for ${s2.detections} frames`);
@@ -77,6 +86,8 @@ try {
     await page.click('#excludeCurrentBtn');
     if (await page.evaluate(() => window.__calibrat3.state.exclusions.intrinsics.size) !== exBefore) throw new Error('exclude button did not re-include the frame');
     await page.click('#computeIntrinsicsBtn');
+    await waitState(() => window.__calibrat3.controllers.calib.pending.size > 0);
+    if (!await page.isDisabled('#calibrationWorkers') || await page.isDisabled('#detectionWorkers')) throw new Error('Calibration must lock only its worker control');
     await waitState(() => window.__calibrat3.state.intrinsics.filter(Boolean).length === 4, null, { timeout: 300000 });
     const s3 = await state();
     step(`intrinsics: ${JSON.stringify(s3.intrinsics)}`);
@@ -165,6 +176,22 @@ try {
     });
     if (rt.error || JSON.stringify(rt.before) !== JSON.stringify(rt.after)) throw new Error(`session round trip: ${JSON.stringify(rt)}`);
     step(`session save/restore round trip ok (${(rt.bytes / 1024).toFixed(0)} KB)`);
+
+    // --- both top-bar controls resize idle pools and show resolved Auto counts
+    const detectedBeforeResize = await page.evaluate(() => window.__calibrat3.controllers.pool.stats.detections);
+    for (const [id, key, counts] of [['detectionWorkers', 'pool', [24, 0]], ['calibrationWorkers', 'calib', [6, 0]]]) {
+        for (const count of counts) {
+            await page.fill(`#${id}`, String(count));
+            await page.dispatchEvent(`#${id}`, 'change');
+            await waitState(({ id, key, count }) => {
+                const pool = window.__calibrat3.controllers[key], input = document.getElementById(id);
+                return !input.disabled && pool.workers.length === (count || pool.autoSize) &&
+                    (count ? input.value === String(count) : input.value === '' && input.placeholder === `Auto (${pool.autoSize})`);
+            }, { id, key, count }, { timeout: 120000 });
+        }
+    }
+    if (await page.evaluate(() => window.__calibrat3.controllers.pool.stats.detections) !== detectedBeforeResize) throw new Error('Resizing ran detection');
+    step('Detect/Calib manual and Auto: top-bar counts agree, busy controls lock independently');
 
     // --- re-detect with "every frame" on top of an existing session (state reset path)
     await page.check('#allFramesCheck');

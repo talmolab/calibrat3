@@ -13,7 +13,8 @@ export class DetectorPool {
     constructor(opts = {}) {
         const hw = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
         // One OpenCV runtime per worker (~60-100 MB). Detection is the throughput bottleneck, so use most cores.
-        this.size = Math.max(1, opts.size ?? Math.min(12, Math.max(1, hw - 2)));
+        this.autoSize = Math.min(12, Math.max(1, hw - 2));
+        this.size = Math.max(1, opts.size ?? this.autoSize);
         this.workerUrl = opts.workerUrl || new URL('./detect-worker.js', import.meta.url);
         this.log = opts.log || (() => {});
         this.workers = [];
@@ -53,6 +54,18 @@ export class DetectorPool {
     }
 
     get totalInFlight() { return this.inFlight.reduce((a, b) => a + b, 0); }
+
+    /** Change worker count while idle; 0 restores automatic sizing. */
+    async resize(size) {
+        if (!Number.isSafeInteger(size) || size < 0) throw new Error('Worker count must be a nonnegative integer');
+        const nextSize = size || this.autoSize;
+        await this.init();
+        if (nextSize === this.size) return;
+        if (this.pending.size) throw new Error('Cannot resize workers during detection');
+        this.terminate();
+        this.size = nextSize;
+        await this.init();
+    }
 
     /** Build detectors for `board` in every worker (cached by config key). */
     async configure(board, options = {}) {

@@ -16,7 +16,11 @@
         </div>
         <div class="topbar-right">
             <span id="sessionLabel" class="session-label">no session</span>
-            <span id="workerStatus" class="worker-status" title="Detection / calibration workers">workers: starting…</span>
+            <div class="worker-controls">
+                <span id="workerStatus" class="worker-status">Workers: starting…</span>
+                <label class="worker-control" for="detectionWorkers">Detect <input type="number" id="detectionWorkers" min="0" step="1" placeholder="Auto" aria-label="Detection workers" title="Empty or 0 = Auto (up to 12). Enter a positive count for manual sizing." disabled></label>
+                <label class="worker-control" for="calibrationWorkers">Calib <input type="number" id="calibrationWorkers" min="0" step="1" placeholder="Auto" aria-label="Calibration workers" title="Empty or 0 = Auto (up to 4). Enter a positive count for manual sizing." disabled></label>
+            </div>
             <a class="topbar-link" href="https://github.com/talmolab/calibrat3" target="_blank" rel="noopener">GitHub</a>
         </div>
     </header>
@@ -172,7 +176,6 @@
                             <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="allFramesCheck"><span>every frame</span></label></div>
                             <div class="config-item"><label>Stride</label><span id="computedStride" class="mono">–</span></div>
                             <div class="config-item"><label>Frames to process</label><span id="framesToProcess" class="mono">–</span></div>
-                            <div class="config-item"><label>Workers</label><span id="poolInfo" class="mono">–</span></div>
                         </div>
                         <div class="config-row">
                             <button id="runDetectionBtn" disabled>Run batch detection</button>

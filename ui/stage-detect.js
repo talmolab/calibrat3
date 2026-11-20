@@ -18,11 +18,13 @@ import { FrameStrip, viridisLike } from './frame-strip.js';
 import { VirtualTable } from './virtual-table.js';
 import { emit, on } from './events.js';
 import { registerKeyHandler } from './video-panel.js';
+import { setDetectionWorkersBusy, waitForDetectionWorkers } from './worker-controls.js';
 
 const MAX_INFLIGHT_PER_VIEW = 2;   // frames handed to the pool but not yet returned, per view
 const THUMB_WIDTH = 160;
 
 let strip = null, table = null, progress = null;
+let detectionBusy = false;   // also guard preview / worker startup before a batch is marked running
 
 export function setupDetectStage() {
     progress = new Progress('detectionProgress');
@@ -143,7 +145,6 @@ function updateSamplingInfo() {
     const { frames, stride } = plannedFrames();
     $('computedStride').textContent = String(stride);
     $('framesToProcess').textContent = `${frames.length} × ${state.views.length} views`;
-    $('poolInfo').textContent = controllers.pool ? `${controllers.pool.size}` : '–';
 }
 
 function plannedFrames() {
@@ -165,13 +166,16 @@ function getDetectionOptions() {
 // ---- single frame --------------------------------------------------------------
 
 export async function detectCurrentFrame() {
-    if (!state.views.length || state.detectionRunning) return;
+    if (!state.views.length || state.detectionRunning || detectionBusy) return;
+    detectionBusy = true;
+    setDetectionWorkersBusy(true);
     const pool = controllers.pool;
     const frame = state.currentFrame;
     const t0 = performance.now();
     try {
         $('detectCurrentResult').textContent = 'detecting…';
         const options = getDetectionOptions();
+        await waitForDetectionWorkers();
         const board = await resolvePattern(getBoardFromForm(), options);
         state.board = board;
         await pool.configure(board, options);
@@ -190,20 +194,33 @@ export async function detectCurrentFrame() {
     } catch (e) {
         showError(`Detection failed: ${e.message}`);
         $('detectCurrentResult').textContent = e.message;
+    } finally {
+        detectionBusy = false;
+        setDetectionWorkersBusy(false);
     }
 }
 
 // ---- batch --------------------------------------------------------------------
 
 export async function runBatchDetection() {
-    if (!state.views.length || state.detectionRunning) return;
+    if (!state.views.length || state.detectionRunning || detectionBusy) return;
+    detectionBusy = true;
+    setDetectionWorkersBusy(true);
     const pool = controllers.pool;
     const vc = controllers.video;
     if (state.isPlaying) vc.stopPlayback();
     let board;
     const options = getDetectionOptions();
-    try { board = await resolvePattern(getBoardFromForm(), options); state.board = board; }
-    catch (e) { showError(`Board pattern probe failed: ${e.message}`); return; }
+    try {
+        await waitForDetectionWorkers();
+        board = await resolvePattern(getBoardFromForm(), options);
+        state.board = board;
+    } catch (e) {
+        showError(`Detection setup failed: ${e.message}`);
+        setDetectionWorkersBusy(false);
+        return;
+    }
+    finally { detectionBusy = false; }
     const { frames, stride } = plannedFrames();
     const nViews = state.views.length;
     const totalJobs = frames.length * nViews;
@@ -307,6 +324,7 @@ export async function runBatchDetection() {
     } finally {
         state.detectionRunning = false;
         state.detectionAbort = null;
+        setDetectionWorkersBusy(false);
         $('cancelDetectionBtn').style.display = 'none';
         setEnabled('runDetectionBtn', true);
         setEnabled('detectCurrentBtn', true);

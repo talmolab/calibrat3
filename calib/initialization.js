@@ -5,15 +5,14 @@
  */
 
 import { state, controllers } from '../ui/app-state.js';
-import { initLogPanel, log, fmtMs } from '../ui/log-panel.js';
+import { initLogPanel, log } from '../ui/log-panel.js';
 import { $, setupStageHeaders, showError, setStageStatus, expandStage, setEnabled } from '../ui/stages.js';
 import { setupVideoPanel, loadSession, registerKeyHandler } from '../ui/video-panel.js';
 import { setupDetectStage, setBoardForm, renderResults as renderDetections } from '../ui/stage-detect.js';
 import { setupIntrinsicsStage, toggleIntrinsicsExclusion, stepWorst as stepWorstIntr, renderResults as renderIntrinsics } from '../ui/stage-intrinsics.js';
 import { setupExtrinsicsStage, toggleExtrinsicsExclusion, stepWorst as stepWorstExtr } from '../ui/stage-extrinsics.js';
 import { setupExportStage } from '../ui/stage-export.js';
-import { DetectorPool } from '../loading/detect-pool.js';
-import { CalibWorker } from '../loading/calib-client.js';
+import { startWorkers } from '../ui/worker-controls.js';
 import { loadSampleSession, pickSessionFolder, scanFileList } from '../loading/folder-loader.js';
 import { validateSession, restoreSession } from '../import-export/session-save.js';
 import { emit } from '../ui/events.js';
@@ -44,26 +43,6 @@ export function initApp() {
         for (const v of state.views) { try { v.decoder.close(); } catch (_) { /* */ } }
         controllers.pool && controllers.pool.terminate();
         controllers.calib && controllers.calib.terminate();
-    });
-}
-
-function startWorkers() {
-    const status = $('workerStatus');
-    const pool = new DetectorPool({ log });
-    const calib = new CalibWorker({ log });
-    controllers.pool = pool;
-    controllers.calib = calib;
-    const t0 = performance.now();
-    status.textContent = `workers: loading OpenCV (${pool.size} detect + ${calib.size} calib)…`;
-    Promise.all([pool.init(), calib.init()]).then(() => {
-        status.textContent = `workers: ${pool.size} detect + ${calib.size} calib ready`;
-        status.className = 'worker-status ok';
-        $('poolInfo').textContent = String(pool.size);
-        log(`All workers ready in ${fmtMs(performance.now() - t0)}`, 'success');
-    }).catch((e) => {
-        status.textContent = 'workers: failed';
-        status.className = 'worker-status err';
-        showError(`Worker startup failed: ${e.message}. Detection and calibration will not work.`);
     });
 }
 

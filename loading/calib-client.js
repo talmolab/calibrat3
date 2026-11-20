@@ -15,7 +15,9 @@ export class CalibWorker {
         this.log = opts.log || (() => {});
         this.workerUrl = opts.workerUrl || new URL('./calib-worker.js', import.meta.url);
         const hw = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
-        this.size = Math.max(1, opts.size ?? Math.min(4, Math.max(1, hw - 2)));
+        this.autoSize = Math.min(4, Math.max(1, hw - 2));
+        this.size = Math.max(1, opts.size ?? this.autoSize);
+        this.onBusyChange = opts.onBusyChange || (() => {});
         this.workers = [];
         this.inFlight = [];
         this.pending = new Map();   // requestId -> {resolve, reject, onProgress, workerIdx}
@@ -30,6 +32,18 @@ export class CalibWorker {
             this.log(`Calibration worker pool ready (${this.size} worker${this.size > 1 ? 's' : ''}: OpenCV + calib modules) in ${(performance.now() - t0).toFixed(0)} ms`, 'success');
         });
         return this._ready;
+    }
+
+    /** Change worker count while idle; 0 restores automatic sizing. */
+    async resize(size) {
+        if (!Number.isSafeInteger(size) || size < 0) throw new Error('Worker count must be a nonnegative integer');
+        const nextSize = size || this.autoSize;
+        await this.init();
+        if (nextSize === this.size) return;
+        if (this.pending.size) throw new Error('Cannot resize workers during calibration');
+        this.terminate();
+        this.size = nextSize;
+        await this.init();
     }
 
     _spawn(idx) {
@@ -53,6 +67,7 @@ export class CalibWorker {
                 const err = new Error(`calib worker ${idx} failed: ${ev.message || 'load error'}`);
                 for (const [id, p] of this.pending) if (p.workerIdx === idx) { this.pending.delete(id); p.reject(err); }
                 this.inFlight[idx] = 0;
+                this.onBusyChange(this.pending.size > 0);
                 reject(err);
             });
         });
@@ -61,6 +76,7 @@ export class CalibWorker {
     _finish(requestId, p) {
         this.pending.delete(requestId);
         this.inFlight[p.workerIdx] = Math.max(0, this.inFlight[p.workerIdx] - 1);
+        this.onBusyChange(this.pending.size > 0);
     }
 
     /**
@@ -76,7 +92,9 @@ export class CalibWorker {
         return new Promise((resolve, reject) => {
             this.pending.set(requestId, { resolve, reject, onProgress: opts.onProgress, workerIdx: idx });
             this.inFlight[idx]++;
-            this.workers[idx].postMessage({ type, requestId, ...payload });
+            this.onBusyChange(true);
+            try { this.workers[idx].postMessage({ type, requestId, ...payload }); }
+            catch (e) { this._finish(requestId, this.pending.get(requestId)); reject(e); }
         });
     }
 
@@ -87,5 +105,6 @@ export class CalibWorker {
         this._ready = null;
         for (const [, p] of this.pending) p.reject(new Error('calib worker terminated'));
         this.pending.clear();
+        this.onBusyChange(false);
     }
 }
