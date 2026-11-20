@@ -92,7 +92,7 @@ input, intrinsics, extrinsics)` → new arrays, `pairErrorBounds`, `DEFAULT_SBA_
 `initApp()` — wires log panel, stages, video panel, loaders (sample / folder / saved
 session), global hotkeys (`X`, `{ }`), starts `DetectorPool` + `CalibWorker`.
 Imports: ui/app-state, ui/log-panel, ui/stages, ui/video-panel, ui/stage-*, ui/events,
-loading/detect-pool, loading/calib-client, loading/folder-loader, import-export/session-save.
+ui/worker-controls, loading/folder-loader, import-export/session-save.
 
 ---
 
@@ -123,6 +123,11 @@ handle), `loadSession(sessionDesc)` (opens decoders in parallel, builds canvases
 emits `session-loaded`), `updateFrameInfo`, `registerKeyHandler`.
 Imports: app-state, loading/video, log-panel, stages, overlays, events.
 
+### ui/worker-controls.js
+`startWorkers`, `setDetectionWorkersBusy`, `waitForDetectionWorkers` — top-bar
+Auto/manual worker counts, initialization, idle resizing, status and busy locks.
+Imports: app-state, stages, log-panel, loading/detect-pool, loading/calib-client.
+
 ### ui/overlays.js
 `drawAllOverlays(frame)` — detections (green), intrinsic reprojection (red X, via
 geometry.projectPoints from stored rvec/tvec), triangulated reprojection (blue +),
@@ -152,7 +157,7 @@ Board form (`getBoardFromForm`, `setBoardForm`), sampling info, `detectCurrentFr
 `runBatchDetection` (sequential decode → pool, in-flight cap, cancel, throttled
 progress, summary log), `renderResults` (strip + virtual table + filters), `stepSampled`.
 Imports: app-state, calib/detection-store, calib/board, calib/frame-selection, log-panel,
-stages, frame-strip, virtual-table, events, video-panel.
+stages, frame-strip, virtual-table, events, video-panel, worker-controls.
 
 ### ui/stage-intrinsics.js
 `setupIntrinsicsStage`, `computeIntrinsics` (per-camera worker requests with progress),
@@ -210,8 +215,8 @@ Requests: `intrinsics`, `extrinsics`, `reprojection`, `sba`, `ping`; replies `pr
 / `result` / `error` / `log`.
 
 ### loading/calib-client.js
-`CalibWorker({log, size})` — a small pool (default `min(4, cores-2)`) so per-camera
-intrinsics run in parallel; `init`, `request(type, payload, {onProgress})`, `terminate`.
+`CalibWorker({log, size, onBusyChange})` — a small pool (default `min(4, cores-2)`) so per-camera
+intrinsics run in parallel; `init`, `resize` (0 = Auto), `request(type, payload, {onProgress})`, `terminate`.
 
 ### loading/folder-loader.js
 `buildSession(entries)` (flat / nested layouts, board.toml discovery),

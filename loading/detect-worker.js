@@ -6,7 +6,9 @@
  * board config and reused for every frame.
  *
  * Protocol (all messages carry `type`):
- *   -> {type:'configure', board}
+ *   -> {type:'configure', board, options?:{fastMarkers?:boolean, minMarkers?:number,
+ *          recoverMarkers?:boolean, minMarkerPerimeterRate?:number, markerRefinement?:'none'|'subpixel',
+ *          adaptiveThreshWinSizeMax?:number}}
  *   <- {type:'configured', key}
  *   -> {type:'detect', requestId, frame, view, image: VideoFrame|ImageBitmap, width, height,
  *          wantThumb?:boolean, thumbWidth?:number}
@@ -98,8 +100,25 @@ function dispose() {
 let fastMarkers = true;    // search markers on a half-resolution image when the frame is large; corners are refined at full resolution
 
 function configure(board, options) {
+    const minMarkers = options.minMarkers ?? 2;
+    if (!Number.isInteger(minMarkers) || minMarkers < 0 || minMarkers > 2) {
+        throw new Error('minMarkers must be 0, 1 or 2');
+    }
+    const recoverMarkers = !!options.recoverMarkers;
+    const markerRefinement = options.markerRefinement ?? 'subpixel';
+    if (!['none', 'subpixel'].includes(markerRefinement)) {
+        throw new Error('Marker corner refinement must be none or subpixel');
+    }
+    const adaptiveThreshWinSizeMax = options.adaptiveThreshWinSizeMax ?? 23;
+    if (!Number.isInteger(adaptiveThreshWinSizeMax) || adaptiveThreshWinSizeMax < 3) {
+        throw new Error('Maximum threshold window must be an integer of at least 3 px');
+    }
+    const minMarkerPerimeterRate = options.minMarkerPerimeterRate ?? 0.03;
+    if (!Number.isFinite(minMarkerPerimeterRate) || minMarkerPerimeterRate < 0 || minMarkerPerimeterRate > 4) {
+        throw new Error('Minimum marker size must be between 0 and 4');
+    }
     fastMarkers = options.fastMarkers !== false;
-    const key = boardKey(board);
+    const key = `${boardKey(board)}|minMarkers=${minMarkers}|recover=${recoverMarkers}|minPerimeter=${minMarkerPerimeterRate}|refinement=${markerRefinement}|thresholdMax=${adaptiveThreshWinSizeMax}`;
     if (det && det.key === key) { postMessage({ type: 'configured', key }); return; }
     dispose();
     const dictId = DICT_IDS()[board.dictName];
@@ -112,15 +131,16 @@ function configure(board, options) {
     const cvBoard = new CV.aruco_CharucoBoard(new CV.Size(layout.sizeX, layout.sizeY), board.squareLength, board.markerLength, dictionary, ids);
     ids.delete();
     const detectorParams = new CV.aruco_DetectorParameters();
-    // Subpixel corner refinement makes a measurable difference for calibration.
-    if ('cornerRefinementMethod' in detectorParams && CV.CORNER_REFINE_SUBPIX !== undefined) {
-        try { detectorParams.cornerRefinementMethod = CV.CORNER_REFINE_SUBPIX; } catch (_) { /* read-only in some builds */ }
-    }
+    detectorParams.minMarkerPerimeterRate = minMarkerPerimeterRate;
+    detectorParams.adaptiveThreshWinSizeMax = adaptiveThreshWinSizeMax;
+    // ChArUco corners are refined independently of this marker setting.
+    detectorParams.cornerRefinementMethod = markerRefinement === 'none' ? CV.CORNER_REFINE_NONE : CV.CORNER_REFINE_SUBPIX;
     const refineParams = new CV.aruco_RefineParameters(10.0, 3.0, true);
     const arucoDetector = new CV.aruco_ArucoDetector(dictionary, detectorParams, refineParams);
     const charucoParams = new CV.aruco_CharucoParameters();
+    charucoParams.minMarkers = minMarkers;
     const charucoDetector = new CV.aruco_CharucoDetector(cvBoard, charucoParams, detectorParams, refineParams);
-    det = { key, dictionary, board: cvBoard, detectorParams, refineParams, arucoDetector, charucoParams, charucoDetector, cornerIdOffset: layout.cornerIdOffset };
+    det = { key, dictionary, board: cvBoard, detectorParams, refineParams, arucoDetector, charucoParams, charucoDetector, recoverMarkers, cornerIdOffset: layout.cornerIdOffset };
     postMessage({ type: 'configured', key });
 }
 
@@ -174,11 +194,14 @@ function detect(msg) {
         det.arucoDetector.detectMarkers(small, markerCorners, markerIds, rejected);
         small.delete();
         if (markerIds.rows >= 4) {
-            for (let m = 0; m < markerCorners.size(); m++) {
-                const c = markerCorners.get(m);
-                const d = c.data32F;
-                for (let k = 0; k < d.length; k++) d[k] /= searchScale;
-                c.delete();
+            // Recovery compares rejected candidates with board projections in full-resolution coordinates.
+            for (const points of det.recoverMarkers ? [markerCorners, rejected] : [markerCorners]) {
+                for (let m = 0; m < points.size(); m++) {
+                    const c = points.get(m);
+                    const d = c.data32F;
+                    for (let k = 0; k < d.length; k++) d[k] /= searchScale;
+                    c.delete();
+                }
             }
         } else {
             // Too few markers at half resolution (small/far board): redo at full resolution.
@@ -189,6 +212,10 @@ function detect(msg) {
         }
     } else {
         det.arucoDetector.detectMarkers(gray, markerCorners, markerIds, rejected);
+    }
+    if (det.recoverMarkers && markerIds.rows > 0 && rejected.size() > 0) {
+        // CharucoDetector's automatic recovery only runs when it also performs marker detection.
+        det.arucoDetector.refineDetectedMarkers(gray, det.board, markerCorners, markerIds, rejected);
     }
     const numMarkers = markerIds.rows;
     const t2 = performance.now();

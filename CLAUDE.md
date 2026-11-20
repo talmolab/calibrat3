@@ -35,8 +35,9 @@ rendered, detected on the main thread and appended DOM per frame. Here:
    wanted frames await the consumer, so memory is bounded. `VideoFrame`s are
    TRANSFERRED to `detect-worker.js` (OpenCV.js in the worker; dictionary/board/
    detectors cached per board config) and closed there. Per-view in-flight cap is
-   2. Thumbnails (160 px JPEG Blobs, view 0) are produced by the worker from the
-   frame it already has — never re-decoded. The pool uses most cores
+   `max(1, ceil(pool.size / nViews))`. Decoder buffering stays at two pending
+   frames per view. Thumbnails (160 px JPEG Blobs, view 0) are produced by the
+   worker from the frame it already has — never re-decoded. The pool uses most cores
    (`min(12, hardwareConcurrency - 2)` workers). "Fast marker search" (opt-in)
    finds markers on a half-resolution image and refines corners at full
    resolution: ~2x faster on frames with a board, but small/far boards lose

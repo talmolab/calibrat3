@@ -18,11 +18,12 @@ import { FrameStrip, viridisLike } from './frame-strip.js';
 import { VirtualTable } from './virtual-table.js';
 import { emit, on } from './events.js';
 import { registerKeyHandler } from './video-panel.js';
+import { setDetectionWorkersBusy, waitForDetectionWorkers } from './worker-controls.js';
 
-const MAX_INFLIGHT_PER_VIEW = 2;   // frames handed to the pool but not yet returned, per view
 const THUMB_WIDTH = 160;
 
 let strip = null, table = null, progress = null;
+let detectionBusy = false;   // also guard preview / worker startup before a batch is marked running
 
 export function setupDetectStage() {
     progress = new Progress('detectionProgress');
@@ -99,7 +100,7 @@ export function setBoardForm(board, sourceLabel = '') {
  * conventions and keeping the one that finds more corners. Only matters for even-row boards.
  * Sets the select to the winner so batch detection and the exported board.toml are explicit.
  */
-async function resolvePattern(board) {
+async function resolvePattern(board, options) {
     if (boardPatternChoice() !== 'auto') return board;
     if (!legacyPatternDiffers(board)) {
         log(`Board pattern: ${board.boardY} rows (odd) — legacy and current ChArUco layouts are identical, nothing to probe`);
@@ -108,10 +109,9 @@ async function resolvePattern(board) {
     }
     const pool = controllers.pool;
     const frame = state.currentFrame;
-    const fast = $('fastDetectCheck').checked;
     const score = async (legacy) => {
         const b = normalizeBoard({ ...board, legacyPattern: legacy });
-        await pool.configure(b, { fastMarkers: fast });
+        await pool.configure(b, options);
         const rs = await Promise.all(state.views.map(async (view, v) => {
             const r = await view.decoder.getFrame(frame);
             if (!r) return null;
@@ -144,7 +144,6 @@ function updateSamplingInfo() {
     const { frames, stride } = plannedFrames();
     $('computedStride').textContent = String(stride);
     $('framesToProcess').textContent = `${frames.length} × ${state.views.length} views`;
-    $('poolInfo').textContent = controllers.pool ? `${controllers.pool.size}` : '–';
 }
 
 function plannedFrames() {
@@ -152,18 +151,33 @@ function plannedFrames() {
     return stridedFrames(state.totalFrames, Math.max(1, intInput('targetSamples', 100)));
 }
 
+function getDetectionOptions() {
+    return {
+        fastMarkers: $('fastDetectCheck').checked,
+        minMarkers: Math.max(0, Math.min(2, intInput('minMarkers', 2))),
+        recoverMarkers: $('recoverMarkersCheck').checked,
+        minMarkerPerimeterRate: Math.max(0, Math.min(4, numInput('minMarkerPerimeterRate', 0.03))),
+        markerRefinement: $('markerRefinement').value,
+        adaptiveThreshWinSizeMax: Math.max(3, intInput('adaptiveThreshWinSizeMax', 23)),
+    };
+}
+
 // ---- single frame --------------------------------------------------------------
 
 export async function detectCurrentFrame() {
-    if (!state.views.length || state.detectionRunning) return;
+    if (!state.views.length || state.detectionRunning || detectionBusy) return;
+    detectionBusy = true;
+    setDetectionWorkersBusy(true);
     const pool = controllers.pool;
     const frame = state.currentFrame;
     const t0 = performance.now();
     try {
         $('detectCurrentResult').textContent = 'detecting…';
-        const board = await resolvePattern(getBoardFromForm());
+        const options = getDetectionOptions();
+        await waitForDetectionWorkers();
+        const board = await resolvePattern(getBoardFromForm(), options);
         state.board = board;
-        await pool.configure(board, { fastMarkers: $('fastDetectCheck').checked });
+        await pool.configure(board, options);
         const results = await Promise.all(state.views.map(async (view, v) => {
             const r = await view.decoder.getFrame(frame);
             if (!r) return null;
@@ -179,21 +193,37 @@ export async function detectCurrentFrame() {
     } catch (e) {
         showError(`Detection failed: ${e.message}`);
         $('detectCurrentResult').textContent = e.message;
+    } finally {
+        detectionBusy = false;
+        setDetectionWorkersBusy(false);
     }
 }
 
 // ---- batch --------------------------------------------------------------------
 
 export async function runBatchDetection() {
-    if (!state.views.length || state.detectionRunning) return;
+    if (!state.views.length || state.detectionRunning || detectionBusy) return;
+    detectionBusy = true;
+    setDetectionWorkersBusy(true);
     const pool = controllers.pool;
     const vc = controllers.video;
     if (state.isPlaying) vc.stopPlayback();
     let board;
-    try { board = await resolvePattern(getBoardFromForm()); state.board = board; }
-    catch (e) { showError(`Board pattern probe failed: ${e.message}`); return; }
+    const options = getDetectionOptions();
+    try {
+        await waitForDetectionWorkers();
+        board = await resolvePattern(getBoardFromForm(), options);
+        state.board = board;
+    } catch (e) {
+        showError(`Detection setup failed: ${e.message}`);
+        setDetectionWorkersBusy(false);
+        return;
+    }
+    finally { detectionBusy = false; }
     const { frames, stride } = plannedFrames();
     const nViews = state.views.length;
+    // Keep the pool fed while bounding outstanding detections per camera.
+    const maxInflightPerView = Math.max(1, Math.ceil(pool.size / nViews));
     const totalJobs = frames.length * nViews;
 
     state.detectionRunning = true;
@@ -234,7 +264,7 @@ export async function runBatchDetection() {
     const ticker = setInterval(() => update(false), 200);
 
     try {
-        await pool.configure(board, { fastMarkers: $('fastDetectCheck').checked });
+        await pool.configure(board, options);
         const t1 = performance.now();
         await Promise.all(state.views.map(async (view, v) => {
             const inflight = new Set();
@@ -242,8 +272,8 @@ export async function runBatchDetection() {
             const decodedBefore = decoder.stats.decoded;
             try {
                 for await (const { frame, videoFrame } of decoder.iterateFrames(frames, { maxPending: 2, signal: abort.signal })) {
+                    while (inflight.size >= maxInflightPerView && !abort.signal.aborted) await Promise.race(inflight);
                     if (abort.signal.aborted) { videoFrame.close(); break; }
-                    while (inflight.size >= MAX_INFLIGHT_PER_VIEW) await Promise.race(inflight);
                     let p;
                     try {
                         p = pool.detect({ frame, view: v, image: videoFrame, width: view.info.width, height: view.info.height, wantThumb: v === 0, thumbWidth: THUMB_WIDTH });
@@ -295,6 +325,7 @@ export async function runBatchDetection() {
     } finally {
         state.detectionRunning = false;
         state.detectionAbort = null;
+        setDetectionWorkersBusy(false);
         $('cancelDetectionBtn').style.display = 'none';
         setEnabled('runDetectionBtn', true);
         setEnabled('detectCurrentBtn', true);

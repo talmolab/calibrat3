@@ -16,7 +16,11 @@
         </div>
         <div class="topbar-right">
             <span id="sessionLabel" class="session-label">no session</span>
-            <span id="workerStatus" class="worker-status" title="Detection / calibration workers">workers: starting…</span>
+            <div class="worker-controls">
+                <span id="workerStatus" class="worker-status">Workers: starting…</span>
+                <label class="worker-control" for="detectionWorkers">Detect <input type="number" id="detectionWorkers" min="0" step="1" placeholder="Auto" aria-label="Detection workers" title="Empty or 0 = Auto (up to 12). Enter a positive count for manual sizing." disabled></label>
+                <label class="worker-control" for="calibrationWorkers">Calib <input type="number" id="calibrationWorkers" min="0" step="1" placeholder="Auto" aria-label="Calibration workers" title="Empty or 0 = Auto (up to 4). Enter a positive count for manual sizing." disabled></label>
+            </div>
             <a class="topbar-link" href="https://github.com/talmolab/calibrat3" target="_blank" rel="noopener">GitHub</a>
         </div>
     </header>
@@ -135,6 +139,30 @@
                                 <select id="boardPattern"><option value="auto" selected>auto (probe both)</option><option value="new">OpenCV ≥ 4.6 (top-left black)</option><option value="legacy">legacy &lt; 4.6 (top-left white)</option></select></div>
                             <div class="config-item"><span id="boardInfo" class="muted small"></span></div>
                         </div>
+                    </div>
+
+                    <div class="config-panel">
+                        <h3>Detection settings</h3>
+                        <div class="config-row">
+                            <div class="config-item"><label for="minMarkers" title="Minimum detected adjacent markers required for each ChArUco corner (minMarkers). Lower values retain more corners on partially visible boards.">Min adjacent markers / corner</label>
+                                <select id="minMarkers">
+                                    <option value="0">0 — no minimum</option>
+                                    <option value="1">1 — allow one marker</option>
+                                    <option value="2" selected>2 — require both (OpenCV default)</option>
+                                </select>
+                            </div>
+                            <div class="config-item"><label class="overlay-checkbox" title="Search ArUco markers on a half-resolution image when the longest frame dimension is ≥1400 px (about 2× faster per frame with a board, but small or far boards lose corners and empty frames cost a second pass). ChArUco corners are still refined at full resolution."><input type="checkbox" id="fastDetectCheck"><span>fast marker search</span></label></div>
+                        </div>
+                        <details class="detection-advanced">
+                            <summary>Advanced</summary>
+                            <div class="config-row">
+                                <div class="config-item"><label class="overlay-checkbox" title="Retry rejected candidates using board geometry. Requires a dictionary with error correction (e.g. 4x4_250); 4x4_1000 has none."><input type="checkbox" id="recoverMarkersCheck"><span>Marker recovery</span></label></div>
+                                <div class="config-item"><label for="minMarkerPerimeterRate" title="Minimum marker perimeter as a fraction of the longest image dimension (OpenCV default: 0.03). Lower values admit smaller markers and more candidates.">Minimum marker size</label><input type="number" id="minMarkerPerimeterRate" value="0.03" min="0" max="4" step="0.005"></div>
+                                <div class="config-item"><label for="markerRefinement" title="Refine ArUco marker corners. Disabling can help interpolation near chessboard squares. ChArUco corners still use subpixel refinement.">Marker corner refinement</label><select id="markerRefinement"><option value="none">None</option><option value="subpixel" selected>Subpixel</option></select></div>
+                                <div class="config-item"><label for="adaptiveThreshWinSizeMax" title="Largest adaptive threshold window (OpenCV default: 23 px). Increase for large, nearby markers; larger ranges take longer to search.">Max threshold window (px)</label><input type="number" id="adaptiveThreshWinSizeMax" value="23" min="3" step="10"></div>
+                            </div>
+                        </details>
+                        <p class="hint">Applies to current-frame and batch detection. Re-run detection after changing settings.</p>
                         <div class="config-row">
                             <button id="detectCurrentBtn" class="secondary" disabled>Detect current frame (D)</button>
                             <span id="detectCurrentResult" class="muted small"></span>
@@ -146,10 +174,8 @@
                         <div class="config-row">
                             <div class="config-item"><label>Target samples</label><input type="number" id="targetSamples" value="100" min="1" step="10"></div>
                             <div class="config-item"><label class="overlay-checkbox"><input type="checkbox" id="allFramesCheck"><span>every frame</span></label></div>
-                            <div class="config-item"><label class="overlay-checkbox" title="Search ArUco markers on a half-resolution image when frames are ≥1400 px wide (about 2× faster per frame with a board, but small or far boards lose corners and empty frames cost a second pass). ChArUco corners are still refined at full resolution."><input type="checkbox" id="fastDetectCheck"><span>fast marker search</span></label></div>
                             <div class="config-item"><label>Stride</label><span id="computedStride" class="mono">–</span></div>
                             <div class="config-item"><label>Frames to process</label><span id="framesToProcess" class="mono">–</span></div>
-                            <div class="config-item"><label>Workers</label><span id="poolInfo" class="mono">–</span></div>
                         </div>
                         <div class="config-row">
                             <button id="runDetectionBtn" disabled>Run batch detection</button>

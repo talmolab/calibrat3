@@ -32,6 +32,9 @@ code { background: #111; padding: 1px 5px; border-radius: 3px; font-size: 12px; 
 .worker-status { font-family: ui-monospace, monospace; }
 .worker-status.ok { color: var(--good); }
 .worker-status.err { color: var(--bad); }
+.worker-controls, .worker-control { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.worker-controls input[type=number] { width: 90px; padding: 3px 6px; font-size: 12px; }
+.worker-controls input::placeholder { color: #aaa; opacity: 1; }
 .topbar-link { color: var(--accent); text-decoration: none; }
 
 .error-msg { display: none; background: #4a1d1d; border: 1px solid #7a2e2e; color: #ffb4b4; padding: 8px 16px; margin: 8px 16px 0; border-radius: 6px; font-size: 13px; }
@@ -123,6 +126,7 @@ button.danger { background: #7a2e2e; }
 .config-row { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
 .config-item { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .config-item label { color: #aaa; font-size: 12px; }
+.detection-advanced summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 input[type=number], select, input[type=text] { background: #1a1a1a; border: 1px solid #444; color: var(--text); padding: 4px 8px; border-radius: 4px; font-size: 13px; }
 input[type=number] { width: 78px; }
 .view-list { margin: 6px 0; font-size: 13px; }
